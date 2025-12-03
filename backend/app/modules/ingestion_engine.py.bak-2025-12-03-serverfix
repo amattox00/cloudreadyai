@@ -1,0 +1,174 @@
+from __future__ import annotations
+
+import csv
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
+
+from sqlalchemy.orm import Session
+
+from app.models.server import Server
+from app.models.storage import Storage
+from app.models.networks import Network
+from app.models.database import Database
+from app.models.application import Application
+from app.models.app_dependency import AppDependency
+from app.models.utilization_metric import UtilizationMetric
+from app.models.business_metadata import BusinessMetadata
+from app.models.licensing_metadata import LicensingMetadata
+
+# Where uploaded CSVs will be persisted
+UPLOAD_ROOT = Path("/tmp/cloudready_uploads")
+
+
+def ensure_upload_root() -> None:
+    """
+    Ensure the upload directory exists.
+    """
+    UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+
+
+def load_csv(csv_path: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """
+    Load a CSV file into a list of dict rows + column names.
+
+    Uses utf-8-sig to handle CSVs exported from Excel with BOMs.
+    """
+    rows: List[Dict[str, Any]] = []
+    columns: List[str] = []
+
+    with csv_path.open("r", newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        columns = reader.fieldnames or []
+        for row in reader:
+            cleaned: Dict[str, Any] = {}
+            for k, v in row.items():
+                if v is None or v == "":
+                    cleaned[k] = None
+                else:
+                    cleaned[k] = v
+            rows.append(cleaned)
+
+    return rows, columns
+
+
+def bulk_insert_from_csv(
+    db: Session,
+    run_id: str,
+    model_cls: Any,
+    csv_path: Path,
+    *,
+    entity_name: str,
+    extra_fields: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """
+    Generic CSV → SQLAlchemy bulk insert helper.
+
+    Assumes:
+    - CSV headers roughly match model field names.
+    - Target model has a 'run_id' column (we inject that via extra_fields).
+    """
+    extra_fields = extra_fields or {}
+
+    rows, columns = load_csv(csv_path)
+    instances: List[Any] = []
+
+    for row in rows:
+        payload: Dict[str, Any] = {}
+
+        # Copy CSV fields that the model actually expects
+        for key, value in row.items():
+            if not hasattr(model_cls, key):
+                # Skip unknown CSV headers
+                continue
+            payload[key] = value
+
+        # Inject extra fields (e.g., run_id)
+        payload.update(extra_fields)
+
+        instances.append(model_cls(**payload))
+
+    if instances:
+        db.add_all(instances)
+        db.commit()
+
+    return {
+        "status": "ok",
+        "message": f"{entity_name} CSV ingested successfully",
+        "run_id": run_id,
+        "entity": entity_name,
+        "rows_ingested": len(instances),
+        "columns": columns,
+        "csv_path": str(csv_path),
+    }
+
+
+def ingestion_target_for_slice(slice_name: str) -> Any:
+    """
+    Map a logical ingestion slice to its SQLAlchemy model.
+    """
+    mapping = {
+        "servers": Server,
+        "storage": Storage,
+        "network": Network,
+        "databases": Database,
+        "applications": Application,
+        "dependencies": AppDependency,
+        "utilization": UtilizationMetric,
+        "business": BusinessMetadata,
+        "licensing": LicensingMetadata,
+        # We will wire OS/Software separately once we confirm the model name
+    }
+
+    if slice_name not in mapping:
+        raise ValueError(f"Unknown ingestion slice: {slice_name}")
+
+    return mapping[slice_name]
+
+
+def persist_uploaded_file(slice_name: str, run_id: str, filename: str, file_bytes: bytes) -> Path:
+    """
+    Persist an uploaded CSV under /tmp/cloudready_uploads/<slice>_<run>_<filename>.
+    """
+    ensure_upload_root()
+
+    normalized_run_id = run_id.replace("/", "_")
+    safe_name = (filename or "upload.csv").replace("/", "_")
+
+    out_name = f"{slice_name}_{normalized_run_id}_{safe_name}"
+    out_path = UPLOAD_ROOT / out_name
+
+    with out_path.open("wb") as f:
+        f.write(file_bytes)
+
+    return out_path
+
+
+def ingest_csv_slice(
+    db: Session,
+    *,
+    slice_name: str,
+    run_id: str,
+    filename: str,
+    file_bytes: bytes,
+) -> Dict[str, Any]:
+    """
+    Orchestrate ingestion for a single slice:
+
+      1) Persist CSV to disk
+      2) Bulk insert into the appropriate table, tagged with run_id
+    """
+    # 1) Save CSV to disk
+    csv_path = persist_uploaded_file(slice_name, run_id, filename, file_bytes)
+
+    # 2) Resolve model for this slice
+    model_cls = ingestion_target_for_slice(slice_name)
+
+    # 3) Bulk insert, tagging rows with this run_id
+    return bulk_insert_from_csv(
+        db,
+        run_id=run_id,
+        model_cls=model_cls,
+        csv_path=csv_path,
+        entity_name=slice_name,
+        extra_fields={"run_id": run_id},
+    )

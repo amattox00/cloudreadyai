@@ -1,0 +1,36 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+# Import your routers here
+from app.routers import runs
+from app.routers import reports
+from app.routers import ingest
+from app.routers import diagrams
+from app.routers import cost
+from app.routers import run_registry
+from app.routers import tco
+
+
+app = FastAPI(
+    title="CloudReadyAI API",
+    description="CloudReadyAI backend services",
+    version="1.0.0",
+)
+
+# CORS configuration (same behavior you had before)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],       # You can tighten this later
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Register routers
+app.include_router(runs.router)
+app.include_router(ingest.router)
+app.include_router(diagrams.router)
+app.include_router(cost.router)
+app.include_router(run_registry.router)
+app.include_router(tco.router)
+app.include_router(reports.router)

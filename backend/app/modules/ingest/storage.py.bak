@@ -1,0 +1,44 @@
+import csv
+from typing import Dict
+
+from sqlalchemy.orm import Session
+
+from app.models.storage import Storage
+
+
+def ingest_storage_csv(db: Session, run_id: str, csv_path: str) -> Dict[str, int]:
+    """
+    Ingest a storage CSV from a local file path.
+
+    Expected headers in sample_storage.csv:
+    volume_id,server_id,size_gb,storage_type
+    """
+    rows_ingested = 0
+
+    with open(csv_path, newline="") as f:
+        reader = csv.DictReader(f)
+
+        for row in reader:
+            if not row:
+                continue
+
+            # Safe parse for size_gb
+            size_raw = (row.get("size_gb") or "").strip()
+            try:
+                size_gb = int(size_raw) if size_raw else 0
+            except ValueError:
+                size_gb = 0
+
+            storage = Storage(
+                run_id=run_id,
+                volume_id=(row.get("volume_id") or "").strip() or None,
+                server_id=(row.get("server_id") or "").strip() or None,
+                size_gb=size_gb,
+                storage_type=(row.get("storage_type") or "").strip() or None,
+            )
+
+            db.add(storage)
+            rows_ingested += 1
+
+    db.commit()
+    return {"rows_ingested": rows_ingested}

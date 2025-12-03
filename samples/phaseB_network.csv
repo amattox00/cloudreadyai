@@ -1,0 +1,4 @@
+device_name,device_type,mgmt_ip,role,site,subnet,vlan
+core-switch-01,switch,10.0.0.10,core,ATL-DC,10.0.0.0/24,10
+db-switch-01,switch,10.0.1.10,dist,ATL-DC,10.0.1.0/24,20
+web-switch-01,switch,10.0.2.10,access,ATL-DC,10.0.2.0/24,30

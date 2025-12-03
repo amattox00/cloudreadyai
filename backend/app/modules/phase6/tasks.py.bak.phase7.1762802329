@@ -1,0 +1,39 @@
+import os
+import itertools
+import httpx
+from typing import List, Dict, Any
+
+# Small, safe guards (env overridable)
+TIMEOUT = float(os.getenv("PHASE6_REFRESH_TIMEOUT", "6"))
+MAX_PAGES = int(os.getenv("PHASE6_REFRESH_MAX_PAGES", "1"))
+
+def refresh_prices(providers: List[str], regions: List[str], services: List[str]) -> Dict[str, Any]:
+    """
+    Phase 6 'scaffolding' task: warm the existing Phase-5 cache by
+    calling the public prices endpoint for each combo. This avoids
+    heavy SDK pulls and keeps behavior predictable on small instances.
+    """
+    base = os.getenv("PHASE6_BASE_URL", "http://127.0.0.1:8000")
+    ok, fail = [], []
+
+    combos = list(itertools.product(providers, regions, services))
+    for provider, region, service in combos:
+        url = f"{base}/v1/providers/prices"
+        params = {
+            "provider": provider,
+            "region": region,
+            "service": service,
+            # Leave room for future paging; we constrain now to avoid OOM
+            "max_pages": str(MAX_PAGES)
+        }
+        try:
+            with httpx.Client(timeout=TIMEOUT) as client:
+                r = client.get(url, params=params)
+                if r.status_code == 200:
+                    ok.append({"provider": provider, "region": region, "service": service})
+                else:
+                    fail.append({"provider": provider, "region": region, "service": service, "status": r.status_code})
+        except Exception as e:
+            fail.append({"provider": provider, "region": region, "service": service, "error": str(e)})
+
+    return {"ok": ok, "fail": fail, "total": len(combos)}

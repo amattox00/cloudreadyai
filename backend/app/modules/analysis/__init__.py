@@ -1,0 +1,1 @@
+# CloudReadyAI Analysis module package

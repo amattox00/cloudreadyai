@@ -1,0 +1,182 @@
+import csv
+from pathlib import Path
+from typing import Dict, List
+
+from sqlalchemy.orm import Session
+from sqlalchemy import text
+
+
+class ServerIngestError(Exception):
+    """Custom exception for server ingestion errors."""
+
+
+def _build_header_map(fieldnames: List[str]) -> Dict[str, str]:
+    """
+    Map our canonical field names to whatever the CSV actually uses.
+
+    Canonical fields:
+      - server_id   (optional, will fall back to hostname)
+      - hostname    (required)
+      - environment (optional)
+      - os_name     (optional)
+      - vcpu        (required for demo)
+      - ram_gb      (required for demo)
+    """
+    present = {f.lower(): f for f in (fieldnames or [])}
+
+    def pick(*candidates: str) -> str | None:
+        for c in candidates:
+            if c.lower() in present:
+                return present[c.lower()]
+        return None
+
+    header_map = {
+        "server_id": pick("server_id", "id", "server"),
+        "hostname": pick("hostname", "server_name", "name"),
+        "environment": pick("environment", "env"),
+        "os_name": pick("os_name", "os", "os_family", "osversion", "os_version"),
+        # accept multiple CPU naming conventions
+        "vcpu": pick("vcpu", "cpu_count", "cpu_cores", "cpu", "cores"),
+        # accept multiple memory naming conventions
+        "ram_gb": pick("ram_gb", "memory_gb", "memory", "ram"),
+    }
+
+    missing_required = [k for k in ("hostname", "vcpu", "ram_gb") if header_map.get(k) is None]
+    if missing_required:
+        raise ServerIngestError(
+            "CSV missing required columns for servers ingest "
+            f"(need variants of hostname / cpu / ram). Missing: {', '.join(missing_required)}"
+        )
+
+    return header_map
+
+
+def _parse_int(value: str) -> int:
+    value = (value or "").strip()
+    if not value:
+        raise ValueError("Empty integer value")
+    return int(value)
+
+
+def _parse_float(value: str) -> float:
+    value = (value or "").strip()
+    if not value:
+        raise ValueError("Empty float value")
+    return float(value)
+
+
+def ingest_servers_csv(db: Session, run_id: str, csv_path: str) -> Dict[str, int]:
+    """
+    Ingest a server inventory CSV into the *servers* table.
+
+    This aligns with the existing analysis / summary / TCO code, which all expect
+    data to live in the `servers` table.
+
+    We purposely keep the schema simple:
+
+      servers table (minimum fields we touch):
+
+        server_id   VARCHAR
+        run_id      VARCHAR
+        hostname    VARCHAR
+        cpu_cores   INTEGER
+        ram_gb      DOUBLE PRECISION
+        environment VARCHAR
+    """
+    path = Path(csv_path)
+
+    if not path.exists():
+        raise FileNotFoundError(f"Servers CSV not found: {csv_path}")
+
+    rows_read = 0
+    rows_created = 0
+    rows_skipped = 0
+    rows_error = 0
+    rows_updated = 0  # not doing updates in this version
+
+    insert_stmt = text(
+        """
+        INSERT INTO servers (
+            server_id,
+            run_id,
+            hostname,
+            cpu_cores,
+            ram_gb,
+            environment
+        )
+        VALUES (
+            :server_id,
+            :run_id,
+            :hostname,
+            :cpu_cores,
+            :ram_gb,
+            :environment
+        )
+        """
+    )
+
+    with path.open(newline="") as f:
+        reader = csv.DictReader(f)
+        header_map = _build_header_map(reader.fieldnames)
+
+        for row in reader:
+            rows_read += 1
+            if not row:
+                rows_skipped += 1
+                continue
+
+            try:
+                hostname = (row.get(header_map["hostname"]) or "").strip()
+                if not hostname:
+                    # hostname is our minimum identity; skip blank rows
+                    rows_skipped += 1
+                    continue
+
+                server_id_src = header_map.get("server_id")
+                server_id_val = (row.get(server_id_src) or "").strip() if server_id_src else ""
+                server_id = server_id_val or hostname
+
+                env_src = header_map.get("environment")
+                environment = (row.get(env_src) or "").strip() if env_src else ""
+
+                os_src = header_map.get("os_name")
+                os_name = (row.get(os_src) or "").strip() if os_src else ""
+
+                cpu_raw = (row.get(header_map["vcpu"]) or "").strip()
+                ram_raw = (row.get(header_map["ram_gb"]) or "").strip()
+
+                # Require CPU + RAM to be parseable for demo; skip bad rows quietly
+                try:
+                    cpu_cores = _parse_int(cpu_raw)
+                    ram_gb = _parse_float(ram_raw)
+                except ValueError:
+                    rows_skipped += 1
+                    continue
+
+                params = {
+                    "server_id": server_id,
+                    "run_id": run_id,
+                    "hostname": hostname,
+                    "cpu_cores": cpu_cores,
+                    "ram_gb": ram_gb,
+                    # environment is useful for later grouping; os_name is ignored for now
+                    "environment": environment or os_name or None,
+                }
+
+                db.execute(insert_stmt, params)
+                rows_created += 1
+
+            except Exception as e:  # noqa: BLE001
+                print(f"[servers ingest] error on row {rows_read}: {e!r}")
+                rows_error += 1
+                continue
+
+    db.commit()
+
+    return {
+        "rows_read": rows_read,
+        "rows_created": rows_created,
+        "rows_updated": rows_updated,
+        "rows_skipped": rows_skipped,
+        "rows_error": rows_error,
+    }

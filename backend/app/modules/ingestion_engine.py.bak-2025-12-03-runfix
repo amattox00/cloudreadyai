@@ -1,0 +1,322 @@
+from __future__ import annotations
+
+import csv
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
+
+from sqlalchemy.orm import Session
+
+from app.models.run import Run
+from app.models.server import Server
+from app.models.storage import Storage
+from app.models.networks import Network
+from app.models.database import Database
+from app.models.application import Application
+from app.models.app_dependency import AppDependency
+from app.models.utilization_metric import UtilizationMetric
+from app.models.business_metadata import BusinessMetadata
+from app.models.licensing_metadata import LicensingMetadata
+
+
+UPLOAD_ROOT = Path("/tmp/cloudready_uploads")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def ensure_upload_root() -> None:
+    """
+    Ensure the upload directory exists.
+    """
+    UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+
+
+def get_run_or_404(db: Session, run_id: str) -> Run:
+    """
+    Lookup a Run by run_id. Raise ValueError if not found.
+    The router will turn this into a 404.
+    """
+    run = db.query(Run).filter(Run.run_id == run_id).first()
+    if not run:
+        raise ValueError(f"Run with run_id='{run_id}' not found")
+    return run
+
+
+def load_csv(csv_path: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """
+    Load a CSV file into a list of dict rows + column names.
+
+    Uses utf-8-sig to handle CSVs exported from Excel with BOMs.
+    """
+    rows: List[Dict[str, Any]] = []
+    columns: List[str] = []
+
+    with csv_path.open("r", newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        columns = reader.fieldnames or []
+        for row in reader:
+            # Normalize empty strings to None so SQLAlchemy can handle them
+            cleaned: Dict[str, Any] = {}
+            for k, v in row.items():
+                if v is None or v == "":
+                    cleaned[k] = None
+                else:
+                    cleaned[k] = v
+            rows.append(cleaned)
+
+    return rows, columns
+
+
+def bulk_insert_from_csv(
+    db: Session,
+    run: Run,
+    model_cls: Any,
+    csv_path: Path,
+    *,
+    entity_name: str,
+    extra_fields: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """
+    Generic CSV → SQLAlchemy bulk insert helper.
+
+    Assumes:
+    - CSV headers roughly match model field names.
+    - Model has a 'run_id' column (we inject that via extra_fields).
+    """
+    extra_fields = extra_fields or {}
+
+    rows, columns = load_csv(csv_path)
+    instances: List[Any] = []
+
+    for row in rows:
+        payload: Dict[str, Any] = {}
+        # Copy CSV fields that the model actually expects
+        for key, value in row.items():
+            if not hasattr(model_cls, key):
+                # Skip unknown columns; we don't want to blow up for extra headers
+                continue
+            payload[key] = value
+
+        # Inject extra fields (e.g., run_id)
+        payload.update(extra_fields)
+
+        instances.append(model_cls(**payload))
+
+    if instances:
+        db.add_all(instances)
+        db.commit()
+
+    return {
+        "status": "ok",
+        "message": f"{entity_name} CSV ingested successfully",
+        "run_id": run.run_id,
+        "entity": entity_name,
+        "rows_ingested": len(instances),
+        "columns": columns,
+        "csv_path": str(csv_path),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Per-slice ingestion functions
+# ---------------------------------------------------------------------------
+
+
+def ingest_servers(db: Session, run_id: str, csv_path: Path) -> Dict[str, Any]:
+    """
+    Ingest Servers CSV for a given run.
+    Expected headers include at least: hostname, cpu_cores, ram_gb, environment.
+    """
+    ensure_upload_root()
+    run = get_run_or_404(db, run_id)
+    return bulk_insert_from_csv(
+        db,
+        run,
+        Server,
+        csv_path,
+        entity_name="servers",
+        extra_fields={"run_id": run.run_id},
+    )
+
+
+def ingest_storage(db: Session, run_id: str, csv_path: Path) -> Dict[str, Any]:
+    """
+    Ingest Storage CSV for a given run.
+    Expected headers include: volume_id, server_id, size_gb, storage_type.
+    """
+    ensure_upload_root()
+    run = get_run_or_404(db, run_id)
+    return bulk_insert_from_csv(
+        db,
+        run,
+        Storage,
+        csv_path,
+        entity_name="storage",
+        extra_fields={"run_id": run.run_id},
+    )
+
+
+def ingest_networks(db: Session, run_id: str, csv_path: Path) -> Dict[str, Any]:
+    """
+    Ingest Network CSV for a given run.
+    Uses app.models.networks.Network model.
+    """
+    ensure_upload_root()
+    run = get_run_or_404(db, run_id)
+    return bulk_insert_from_csv(
+        db,
+        run,
+        Network,
+        csv_path,
+        entity_name="networks",
+        extra_fields={"run_id": run.run_id},
+    )
+
+
+def ingest_databases(db: Session, run_id: str, csv_path: Path) -> Dict[str, Any]:
+    """
+    Ingest Database CSV for a given run.
+    Uses app.models.database.Database model.
+    """
+    ensure_upload_root()
+    run = get_run_or_404(db, run_id)
+    return bulk_insert_from_csv(
+        db,
+        run,
+        Database,
+        csv_path,
+        entity_name="databases",
+        extra_fields={"run_id": run.run_id},
+    )
+
+
+def ingest_applications(db: Session, run_id: str, csv_path: Path) -> Dict[str, Any]:
+    """
+    Ingest Application CSV for a given run.
+    Uses app.models.application.Application model.
+    """
+    ensure_upload_root()
+    run = get_run_or_404(db, run_id)
+    return bulk_insert_from_csv(
+        db,
+        run,
+        Application,
+        csv_path,
+        entity_name="applications",
+        extra_fields={"run_id": run.run_id},
+    )
+
+
+def ingest_dependencies(db: Session, run_id: str, csv_path: Path) -> Dict[str, Any]:
+    """
+    Ingest Application Dependency CSV for a given run.
+    Uses app.models.app_dependency.AppDependency model.
+    """
+    ensure_upload_root()
+    run = get_run_or_404(db, run_id)
+    return bulk_insert_from_csv(
+        db,
+        run,
+        AppDependency,
+        csv_path,
+        entity_name="dependencies",
+        extra_fields={"run_id": run.run_id},
+    )
+
+
+def ingest_utilization(db: Session, run_id: str, csv_path: Path) -> Dict[str, Any]:
+    """
+    Ingest Utilization CSV for a given run.
+    Uses app.models.utilization_metric.UtilizationMetric model.
+    """
+    ensure_upload_root()
+    run = get_run_or_404(db, run_id)
+    return bulk_insert_from_csv(
+        db,
+        run,
+        UtilizationMetric,
+        csv_path,
+        entity_name="utilization",
+        extra_fields={"run_id": run.run_id},
+    )
+
+
+def ingest_business(db: Session, run_id: str, csv_path: Path) -> Dict[str, Any]:
+    """
+    Ingest Business Metadata CSV for a given run.
+    Uses app.models.business_metadata.BusinessMetadata model.
+    """
+    ensure_upload_root()
+    run = get_run_or_404(db, run_id)
+    return bulk_insert_from_csv(
+        db,
+        run,
+        BusinessMetadata,
+        csv_path,
+        entity_name="business",
+        extra_fields={"run_id": run.run_id},
+    )
+
+
+def ingest_licensing(db: Session, run_id: str, csv_path: Path) -> Dict[str, Any]:
+    """
+    Ingest Licensing Metadata CSV for a given run.
+    Uses app.models.licensing_metadata.LicensingMetadata model.
+    """
+    ensure_upload_root()
+    run = get_run_or_404(db, run_id)
+    return bulk_insert_from_csv(
+        db,
+        run,
+        LicensingMetadata,
+        csv_path,
+        entity_name="licensing",
+        extra_fields={"run_id": run.run_id},
+    )
+
+
+def ingest_os_metadata(db: Session, run_id: str, csv_path: Path) -> Dict[str, Any]:
+    """
+    Placeholder for OS / software metadata ingestion.
+
+    NOTE:
+    - We intentionally do NOT import OsMetadata here because the current
+      app.models.os_metadata module does not define a class named OsMetadata.
+    - Once we confirm the actual model class name, we can wire it up exactly
+      like the other slices.
+    """
+    ensure_upload_root()
+    run = get_run_or_404(db, run_id)
+
+    rows, columns = load_csv(csv_path)
+    # For now, we simply acknowledge the upload without inserting records.
+    # This keeps the engine stable and prevents import-time crashes.
+    return {
+        "status": "ok",
+        "message": "OS/Software CSV received (OS metadata ingestion not yet wired to a DB model)",
+        "run_id": run.run_id,
+        "entity": "os_metadata",
+        "rows_ingested": len(rows),
+        "columns": columns,
+        "csv_path": str(csv_path),
+    }
+
+
+def list_ingest_routes() -> List[Dict[str, str]]:
+    """
+    Introspection helper for /v1/ingest/routes.
+    """
+    return [
+        {"method": "POST", "path": "/v1/ingest/servers"},
+        {"method": "POST", "path": "/v1/ingest/storage"},
+        {"method": "POST", "path": "/v1/ingest/networks"},
+        {"method": "POST", "path": "/v1/ingest/databases"},
+        {"method": "POST", "path": "/v1/ingest/applications"},
+        {"method": "POST", "path": "/v1/ingest/dependencies"},
+        {"method": "POST", "path": "/v1/ingest/os-metadata"},
+        {"method": "POST", "path": "/v1/ingest/utilization"},
+        {"method": "POST", "path": "/v1/ingest/business"},
+        {"method": "POST", "path": "/v1/ingest/licensing"},
+    ]

@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+/* ===========================
+   CloudReadyAI Unified Dark Theme
+   =========================== */
+
+:root {
+  color-scheme: dark;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+/* Gradient background similar to original Assessment Workspace */
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  background: radial-gradient(circle at top left, #001b1b, #000a0a 60%, #000000);
+  color: #e5f7f7; /* brighter neutral text */
+}
+
+/* Headings and strong text */
+h1, h2, h3, h4, h5, h6, strong {
+  color: #ffffff;
+}
+
+/* Links */
+a {
+  color: #5eead4; /* teal-300 */
+  text-decoration: none;
+}
+a:hover {
+  color: #2dd4bf; /* teal-400 */
+}
+
+/* Buttons */
+button, .btn {
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+}
+button:hover, .btn:hover {
+  opacity: 0.85;
+}
+
+/* Cards and panels */
+section, div.border, .rounded-2xl {
+  background-color: rgba(255, 255, 255, 0.02);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Sidebar active state for visibility */
+aside a.active,
+aside a[aria-current="page"] {
+  background-color: rgba(94, 234, 212, 0.15);
+  color: #5eead4;
+}
+
+/* Breadcrumbs */
+nav a {
+  color: #a7f3d0; /* light green-teal */
+}
+nav a:hover {
+  color: #99f6e4;
+}
+
+/* Input fields, selects */
+input, select, textarea {
+  background-color: rgba(255, 255, 255, 0.07);
+  color: #e5f7f7;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.5rem;
+  padding: 0.4rem 0.6rem;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: #5eead4;
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+/* Improve text selection visibility */
+::selection {
+  background: #5eead4;
+  color: #000000;
+}

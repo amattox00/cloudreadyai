@@ -1,0 +1,4 @@
+server_id,hostname,environment,os_name,vcpu,ram_gb
+srv-1001,app-server-01,Prod,Windows Server 2019,8,32
+srv-1002,db-server-01,Prod,Red Hat Enterprise Linux,16,64
+srv-1003,web-server-01,Dev,Ubuntu 22.04,4,16

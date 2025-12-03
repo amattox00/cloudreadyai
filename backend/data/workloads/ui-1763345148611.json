@@ -1,0 +1,27 @@
+{
+  "workload_id": "ui-1763345148611",
+  "name": "CloudReadyAI Landing Zone",
+  "description": "Created via UI ingestion for CloudReadyAI Landing Zone",
+  "environment": "Prod",
+  "deployment_model": "AWS Landing Zone",
+  "business": null,
+  "nodes": [
+    {
+      "node_id": "app1",
+      "name": "Primary Application",
+      "role": "app",
+      "layer": "application",
+      "technology_type": "web_app",
+      "platform": {
+        "location": "aws",
+        "service_hint": "ec2",
+        "region": "us-east-1",
+        "account_id": null
+      },
+      "sizing": null,
+      "labels": [],
+      "metadata": {}
+    }
+  ],
+  "edges": []
+}

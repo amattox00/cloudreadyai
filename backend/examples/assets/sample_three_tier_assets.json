@@ -1,0 +1,52 @@
+{
+  "workload_id": "wl-ingested-sample-3tier",
+  "name": "Ingested 3-Tier Web App",
+  "description": "Example of converting discovery assets into a normalized Workload.",
+  "environment": "prod",
+  "deployment_model": "single_cloud",
+  "business": {
+    "owner": "Application Team",
+    "criticality": "high",
+    "industry": "Example",
+    "tags": ["customer-facing", "ingested"]
+  },
+  "components": [
+    {
+      "id": "clients",
+      "name": "Users / Clients",
+      "role": "client",
+      "layer": "presentation",
+      "technology_type": "other",
+      "platform": { "location": "other", "service_hint": "internet" }
+    },
+    {
+      "id": "lb",
+      "name": "Public ALB",
+      "role": "edge",
+      "layer": "presentation",
+      "technology_type": "load_balancer",
+      "platform": { "location": "aws", "service_hint": "alb", "region": "us-east-2" }
+    },
+    {
+      "id": "app",
+      "name": "App Pods (EKS)",
+      "role": "app",
+      "layer": "application",
+      "technology_type": "k8s_pod",
+      "platform": { "location": "aws", "service_hint": "eks", "region": "us-east-2" }
+    },
+    {
+      "id": "db",
+      "name": "PostgreSQL (RDS)",
+      "role": "data",
+      "layer": "data",
+      "technology_type": "database",
+      "platform": { "location": "aws", "service_hint": "rds", "region": "us-east-2" }
+    }
+  ],
+  "links": [
+    { "id": "l1", "source": "clients", "target": "lb", "relationship": "calls" },
+    { "id": "l2", "source": "lb", "target": "app", "relationship": "calls" },
+    { "id": "l3", "source": "app", "target": "db", "relationship": "reads_from" }
+  ]
+}

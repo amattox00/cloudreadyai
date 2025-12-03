@@ -1,0 +1,27 @@
+{
+  "workload_id": "phaseA4-sample-1",
+  "name": "PhaseA4 Sample Workload",
+  "description": "Created by manual Phase A4 check",
+  "environment": "prod",
+  "deployment_model": "aws",
+  "business": null,
+  "nodes": [
+    {
+      "node_id": "app1",
+      "name": "Sample App",
+      "role": "app",
+      "layer": "application",
+      "technology_type": "web_app",
+      "platform": {
+        "location": "aws",
+        "service_hint": "ec2",
+        "region": "us-east-1",
+        "account_id": null
+      },
+      "sizing": null,
+      "labels": [],
+      "metadata": {}
+    }
+  ],
+  "edges": []
+}

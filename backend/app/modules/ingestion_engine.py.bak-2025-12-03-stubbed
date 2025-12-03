@@ -1,0 +1,472 @@
+import os
+import csv
+import io
+import uuid
+from typing import List, Dict, Any, Tuple
+
+from fastapi import UploadFile
+from sqlalchemy.orm import Session
+
+from app.models.run import Run
+from app.models.server import Server
+from app.models.storage import Storage
+from app.models.networks import Network
+from app.models.database import Database
+from app.models.application import Application
+from app.models.app_dependency import AppDependency
+from app.models.utilization_metric import UtilizationMetric
+from app.models.business_metadata import BusinessMetadata
+from app.models.licensing_metadata import LicensingMetadata
+
+
+UPLOAD_DIR = "/tmp/cloudready_uploads"
+
+
+# ---------- Helpers ----------
+
+
+def _ensure_upload_dir() -> None:
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+def _load_csv_and_save(
+    file: UploadFile,
+    run_external_id: str,
+    entity: str,
+) -> Tuple[List[Dict[str, str]], str, List[str]]:
+    """
+    Read the uploaded CSV into memory AND save the raw file under /tmp/cloudready_uploads.
+
+    Returns: (rows, csv_path, columns)
+    """
+    _ensure_upload_dir()
+
+    raw_bytes = file.file.read()
+    # Reset pointer so FastAPI/Starlette doesn't get confused later
+    file.file.seek(0)
+
+    # Decode CSV text
+    text = raw_bytes.decode("utf-8-sig")
+    csv_io = io.StringIO(text)
+    reader = csv.DictReader(csv_io)
+    rows: List[Dict[str, str]] = list(reader)
+    columns: List[str] = reader.fieldnames or []
+
+    # Save file to disk for traceability
+    safe_name = file.filename or f"{entity}.csv"
+    dest_path = os.path.join(
+        UPLOAD_DIR,
+        f"{entity}_{run_external_id}_{safe_name}",
+    )
+    with open(dest_path, "wb") as f:
+        f.write(raw_bytes)
+
+    return rows, dest_path, columns
+
+
+def _get_run_or_raise(db: Session, run_external_id: str) -> Run:
+    """
+    Look up a Run by external_id (e.g., 'run-12858861').
+    Raises ValueError if not found.
+    """
+    run = db.query(Run).filter(Run.external_id == run_external_id).first()
+    if not run:
+        raise ValueError(f"Run with external_id '{run_external_id}' not found")
+    return run
+
+
+def _success_response(
+    run_external_id: str,
+    entity: str,
+    rows_ingested: int,
+    columns: List[str],
+    csv_path: str,
+) -> Dict[str, Any]:
+    return {
+        "status": "ok",
+        "message": f"{entity.capitalize()} CSV ingested successfully",
+        "run_id": run_external_id,
+        "entity": entity,
+        "rows_ingested": rows_ingested,
+        "columns": columns,
+        "csv_path": csv_path,
+    }
+
+
+# ---------- Servers ----------
+
+
+def ingest_servers_csv(
+    db: Session,
+    run_external_id: str,
+    file: UploadFile,
+) -> Dict[str, Any]:
+    run = _get_run_or_raise(db, run_external_id)
+    rows, csv_path, columns = _load_csv_and_save(file, run_external_id, "servers")
+
+    if not rows:
+        return _success_response(run_external_id, "servers", 0, columns, csv_path)
+
+    ingested = 0
+
+    for row in rows:
+        hostname = (row.get("hostname") or row.get("Hostname") or "").strip()
+        if not hostname:
+            # Skip completely empty/bad rows
+            continue
+
+        cpu_raw = row.get("cpu_cores") or row.get("CPU") or row.get("vCPU") or ""
+        ram_raw = row.get("ram_gb") or row.get("RAM_GB") or row.get("memory_gb") or ""
+
+        try:
+            cpu_cores = int(cpu_raw) if cpu_raw else None
+        except ValueError:
+            cpu_cores = None
+
+        try:
+            # keep as float/decimal-compatible; SQLAlchemy will coerce as needed
+            memory_gb = float(ram_raw) if ram_raw else None
+        except ValueError:
+            memory_gb = None
+
+        environment = (row.get("environment") or row.get("Environment") or "").strip() or None
+        os_name = (row.get("os") or row.get("OS") or "").strip() or None
+
+        # IMPORTANT:
+        # - We DO NOT try to compute server_id from existing rows
+        # - We just generate a UUID for this server_id so we don't conflict with any legacy data
+        server = Server(
+            server_id=str(uuid.uuid4()),
+            run_id=run.external_id,
+            hostname=hostname,
+            ip=None,
+            cpu_cores=cpu_cores,
+            memory_gb=memory_gb,
+            os=os_name,
+            environment=environment,
+        )
+        db.add(server)
+        ingested += 1
+
+    db.commit()
+    return _success_response(run_external_id, "servers", ingested, columns, csv_path)
+
+
+# ---------- Storage ----------
+
+
+def ingest_storage_csv(
+    db: Session,
+    run_external_id: str,
+    file: UploadFile,
+) -> Dict[str, Any]:
+    run = _get_run_or_raise(db, run_external_id)
+    rows, csv_path, columns = _load_csv_and_save(file, run_external_id, "storage")
+
+    if not rows:
+        return _success_response(run_external_id, "storage", 0, columns, csv_path)
+
+    ingested = 0
+
+    for row in rows:
+        volume_id = (row.get("volume_id") or row.get("VolumeId") or "").strip()
+        server_ref = (row.get("server_id") or row.get("ServerId") or "").strip()
+        size_raw = row.get("size_gb") or row.get("SizeGB") or ""
+        storage_type = (row.get("storage_type") or row.get("StorageType") or "").strip() or None
+
+        if not volume_id:
+            continue
+
+        try:
+            size_gb = int(size_raw) if size_raw else None
+        except ValueError:
+            size_gb = None
+
+        # CRITICAL:
+        # - We DO NOT touch Storage.storage_id here.
+        # - We assume the DB/sequence/default now takes care of storage_id.
+        storage = Storage(
+            run_id=run.external_id,
+            volume_id=volume_id,
+            server_id=server_ref or None,
+            size_gb=size_gb,
+            storage_type=storage_type,
+        )
+        db.add(storage)
+        ingested += 1
+
+    db.commit()
+    return _success_response(run_external_id, "storage", ingested, columns, csv_path)
+
+
+# ---------- Other slices (network, DB, apps, etc.) ----------
+
+
+def ingest_network_csv(
+    db: Session,
+    run_external_id: str,
+    file: UploadFile,
+) -> Dict[str, Any]:
+    run = _get_run_or_raise(db, run_external_id)
+    rows, csv_path, columns = _load_csv_and_save(file, run_external_id, "network")
+
+    if not rows:
+        return _success_response(run_external_id, "network", 0, columns, csv_path)
+
+    ingested = 0
+
+    for row in rows:
+        cidr = (row.get("cidr") or row.get("CIDR") or "").strip()
+        if not cidr:
+            continue
+
+        vlan = (row.get("vlan") or row.get("VLAN") or "").strip() or None
+        name = (row.get("name") or row.get("Name") or "").strip() or None
+
+        net = Network(
+            run_id=run.external_id,
+            cidr=cidr,
+            vlan=vlan,
+            name=name,
+        )
+        db.add(net)
+        ingested += 1
+
+    db.commit()
+    return _success_response(run_external_id, "network", ingested, columns, csv_path)
+
+
+def ingest_databases_csv(
+    db: Session,
+    run_external_id: str,
+    file: UploadFile,
+) -> Dict[str, Any]:
+    run = _get_run_or_raise(db, run_external_id)
+    rows, csv_path, columns = _load_csv_and_save(file, run_external_id, "databases")
+
+    if not rows:
+        return _success_response(run_external_id, "databases", 0, columns, csv_path)
+
+    ingested = 0
+
+    for row in rows:
+        name = (row.get("db_name") or row.get("name") or "").strip()
+        if not name:
+            continue
+
+        engine = (row.get("engine") or row.get("Engine") or "").strip() or None
+        version = (row.get("version") or row.get("Version") or "").strip() or None
+        host = (row.get("host") or row.get("Host") or "").strip() or None
+
+        db_obj = Database(
+            run_id=run.external_id,
+            name=name,
+            engine=engine,
+            version=version,
+            host=host,
+        )
+        db.add(db_obj)
+        ingested += 1
+
+    db.commit()
+    return _success_response(run_external_id, "databases", ingested, columns, csv_path)
+
+
+def ingest_applications_csv(
+    db: Session,
+    run_external_id: str,
+    file: UploadFile,
+) -> Dict[str, Any]:
+    run = _get_run_or_raise(db, run_external_id)
+    rows, csv_path, columns = _load_csv_and_save(file, run_external_id, "applications")
+
+    if not rows:
+        return _success_response(run_external_id, "applications", 0, columns, csv_path)
+
+    ingested = 0
+
+    for row in rows:
+        name = (row.get("app_name") or row.get("name") or "").strip()
+        if not name:
+            continue
+
+        owner = (row.get("owner") or row.get("Owner") or "").strip() or None
+        tier = (row.get("tier") or row.get("Tier") or "").strip() or None
+
+        app = Application(
+            run_id=run.external_id,
+            name=name,
+            owner=owner,
+            tier=tier,
+        )
+        db.add(app)
+        ingested += 1
+
+    db.commit()
+    return _success_response(run_external_id, "applications", ingested, columns, csv_path)
+
+
+def ingest_dependencies_csv(
+    db: Session,
+    run_external_id: str,
+    file: UploadFile,
+) -> Dict[str, Any]:
+    run = _get_run_or_raise(db, run_external_id)
+    rows, csv_path, columns = _load_csv_and_save(file, run_external_id, "dependencies")
+
+    if not rows:
+        return _success_response(run_external_id, "dependencies", 0, columns, csv_path)
+
+    ingested = 0
+
+    for row in rows:
+        source = (row.get("source") or row.get("Source") or "").strip()
+        target = (row.get("target") or row.get("Target") or "").strip()
+        if not source or not target:
+            continue
+
+        dep_type = (row.get("type") or row.get("Type") or "").strip() or None
+
+        dep = AppDependency(
+            run_id=run.external_id,
+            source=source,
+            target=target,
+            dependency_type=dep_type,
+        )
+        db.add(dep)
+        ingested += 1
+
+    db.commit()
+    return _success_response(run_external_id, "dependencies", ingested, columns, csv_path)
+
+
+def ingest_utilization_csv(
+    db: Session,
+    run_external_id: str,
+    file: UploadFile,
+) -> Dict[str, Any]:
+    run = _get_run_or_raise(db, run_external_id)
+    rows, csv_path, columns = _load_csv_and_save(file, run_external_id, "utilization")
+
+    if not rows:
+        return _success_response(run_external_id, "utilization", 0, columns, csv_path)
+
+    ingested = 0
+
+    for row in rows:
+        server_ref = (row.get("server_id") or row.get("hostname") or "").strip()
+        if not server_ref:
+            continue
+
+        cpu_raw = row.get("cpu_pct") or row.get("CPU_PCT") or ""
+        mem_raw = row.get("mem_pct") or row.get("MEM_PCT") or ""
+
+        try:
+            cpu_pct = float(cpu_raw) if cpu_raw else None
+        except ValueError:
+            cpu_pct = None
+
+        try:
+            mem_pct = float(mem_raw) if mem_raw else None
+        except ValueError:
+            mem_pct = None
+
+        util = UtilizationMetric(
+            run_id=run.external_id,
+            server_id=server_ref,
+            cpu_pct=cpu_pct,
+            mem_pct=mem_pct,
+        )
+        db.add(util)
+        ingested += 1
+
+    db.commit()
+    return _success_response(run_external_id, "utilization", ingested, columns, csv_path)
+
+
+def ingest_business_csv(
+    db: Session,
+    run_external_id: str,
+    file: UploadFile,
+) -> Dict[str, Any]:
+    run = _get_run_or_raise(db, run_external_id)
+    rows, csv_path, columns = _load_csv_and_save(file, run_external_id, "business")
+
+    if not rows:
+        return _success_response(run_external_id, "business", 0, columns, csv_path)
+
+    ingested = 0
+
+    for row in rows:
+        app_name = (row.get("app_name") or row.get("name") or "").strip()
+        if not app_name:
+            continue
+
+        owner = (row.get("owner") or row.get("Owner") or "").strip() or None
+        criticality = (row.get("criticality") or row.get("Criticality") or "").strip() or None
+
+        meta = BusinessMetadata(
+            run_id=run.external_id,
+            app_name=app_name,
+            owner=owner,
+            criticality=criticality,
+        )
+        db.add(meta)
+        ingested += 1
+
+    db.commit()
+    return _success_response(run_external_id, "business", ingested, columns, csv_path)
+
+
+def ingest_licensing_csv(
+    db: Session,
+    run_external_id: str,
+    file: UploadFile,
+) -> Dict[str, Any]:
+    run = _get_run_or_raise(db, run_external_id)
+    rows, csv_path, columns = _load_csv_and_save(file, run_external_id, "licensing")
+
+    if not rows:
+        return _success_response(run_external_id, "licensing", 0, columns, csv_path)
+
+    ingested = 0
+
+    for row in rows:
+        product = (row.get("product") or row.get("Product") or "").strip()
+        if not product:
+            continue
+
+        vendor = (row.get("vendor") or row.get("Vendor") or "").strip() or None
+        license_type = (row.get("license_type") or row.get("LicenseType") or "").strip() or None
+
+        lic = LicensingMetadata(
+            run_id=run.external_id,
+            product=product,
+            vendor=vendor,
+            license_type=license_type,
+        )
+        db.add(lic)
+        ingested += 1
+
+    db.commit()
+    return _success_response(run_external_id, "licensing", ingested, columns, csv_path)
+
+
+# ---------- Introspection for /v1/ingest/routes ----------
+
+
+def list_ingest_routes() -> List[Dict[str, str]]:
+    """
+    Static description used by /v1/ingest/routes so the UI can discover endpoints.
+    """
+    return [
+        {"method": "POST", "path": "/v1/ingest/servers"},
+        {"method": "POST", "path": "/v1/ingest/storage"},
+        {"method": "POST", "path": "/v1/ingest/network"},
+        {"method": "POST", "path": "/v1/ingest/databases"},
+        {"method": "POST", "path": "/v1/ingest/applications"},
+        {"method": "POST", "path": "/v1/ingest/dependencies"},
+        {"method": "POST", "path": "/v1/ingest/utilization"},
+        {"method": "POST", "path": "/v1/ingest/business"},
+        {"method": "POST", "path": "/v1/ingest/licensing"},
+    ]

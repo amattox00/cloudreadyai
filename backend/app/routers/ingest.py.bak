@@ -1,0 +1,377 @@
+from typing import Optional
+
+from fastapi import APIRouter, Depends, File, UploadFile, HTTPException
+from sqlalchemy.orm import Session
+
+from app.db import get_db
+from app.modules.ingest.servers import ingest_servers_csv
+from app.modules.ingest.storage import ingest_storage_csv
+from app.modules.ingest.network import ingest_network_csv
+from app.modules.ingest.databases import ingest_databases_csv
+from app.modules.ingest.applications import ingest_applications_csv
+from app.modules.ingest.business import ingest_business_csv
+from app.modules.ingest.dependencies import ingest_dependencies_csv
+from app.modules.ingest.os_software import ingest_os_csv
+from app.modules.ingest.licensing import ingest_licensing_csv
+from app.modules.ingest.utilization import ingest_utilization_csv
+from app.routers.runs import increment_ingest_counts
+
+router = APIRouter(
+    prefix="/v1/ingest",
+    tags=["ingest"],
+)
+
+@router.post("/servers")
+async def ingest_servers(
+    file: UploadFile = File(..., description="Servers CSV"),
+    run_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Ingest a servers CSV and (optionally) attach the row count to a run.
+    """
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded servers CSV is empty.")
+
+    tmp_path = "/tmp/ingest_servers.csv"
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(contents)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write temp servers CSV: {e}")
+
+    try:
+        result = ingest_servers_csv(db=db, run_id=run_id or "", csv_path=tmp_path)
+        rows = result.get("rows_ingested", 0)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to ingest servers CSV: {e}")
+
+    if run_id:
+        try:
+            increment_ingest_counts(run_id, servers=rows)
+        except Exception:
+            # Don't fail the request if stats update fails
+            pass
+
+    return {
+        "kind": "servers",
+        "rows_ingested": rows,
+        "run_id": run_id,
+        "message": f"Ingested {rows} server rows.",
+    }
+
+
+@router.post("/storage")
+async def ingest_storage(
+    file: UploadFile = File(..., description="Storage CSV"),
+    run_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Ingest a storage CSV and bump storage_ingested on the associated run.
+    """
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded storage CSV is empty.")
+
+    tmp_path = "/tmp/ingest_storage.csv"
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(contents)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write temp storage CSV: {e}")
+
+    try:
+        result = ingest_storage_csv(db=db, run_id=run_id or "", csv_path=tmp_path)
+        rows = result.get("rows_ingested", 0)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to ingest storage CSV: {e}")
+
+    if run_id:
+        try:
+            increment_ingest_counts(run_id, storage=rows)
+        except Exception:
+            pass
+
+    return {
+        "kind": "storage",
+        "rows_ingested": rows,
+        "run_id": run_id,
+        "message": f"Ingested {rows} storage rows.",
+    }
+
+
+@router.post("/network")
+async def ingest_network(
+    file: UploadFile = File(..., description="Network CSV"),
+    run_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Ingest a network CSV and bump network_ingested on the associated run.
+    """
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded network CSV is empty.")
+
+    tmp_path = "/tmp/ingest_network.csv"
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(contents)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write temp network CSV: {e}")
+
+    try:
+        result = ingest_network_csv(db=db, run_id=run_id or "", csv_path=tmp_path)
+        rows = result.get("rows_ingested", 0)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to ingest network CSV: {e}")
+
+    if run_id:
+        try:
+            increment_ingest_counts(run_id, network=rows)
+        except Exception:
+            pass
+
+    return {
+        "kind": "network",
+        "rows_ingested": rows,
+        "run_id": run_id,
+        "message": f"Ingested {rows} network rows.",
+    }
+
+
+@router.post("/databases")
+async def ingest_databases(
+    file: UploadFile = File(..., description="Databases CSV"),
+    run_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Ingest a databases CSV. For now we do NOT increment any run counters.
+    """
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded databases CSV is empty.")
+
+    tmp_path = "/tmp/ingest_databases.csv"
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(contents)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write temp databases CSV: {e}")
+
+    try:
+        result = ingest_databases_csv(db=db, run_id=run_id or "", csv_path=tmp_path)
+        rows = result.get("rows_ingested", 0)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to ingest databases CSV: {e}")
+
+    return {
+        "kind": "databases",
+        "rows_ingested": rows,
+        "run_id": run_id,
+        "message": f"Ingested {rows} database rows.",
+    }
+
+@router.post("/business")
+async def ingest_business(
+    file: UploadFile = File(..., description="Business metadata CSV"),
+    run_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Ingest business metadata for applications.
+    """
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded business metadata CSV is empty.")
+
+    tmp_path = "/tmp/ingest_business.csv"
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(contents)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write temp business CSV: {e}")
+
+    try:
+        result = ingest_business_csv(db=db, run_id=run_id or "", csv_path=tmp_path)
+        rows = result.get("rows_ingested", 0)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to ingest business CSV: {e}")
+
+    return {
+        "kind": "business",
+        "rows_ingested": rows,
+        "run_id": run_id,
+        "message": f"Ingested {rows} business metadata rows.",
+    }
+
+
+@router.post("/dependencies")
+async def ingest_dependencies(
+    file: UploadFile = File(..., description="Application dependencies CSV"),
+    run_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Ingest application-to-application dependencies.
+    """
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded dependencies CSV is empty.")
+
+    tmp_path = "/tmp/ingest_dependencies.csv"
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(contents)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write temp dependencies CSV: {e}")
+
+    try:
+        result = ingest_dependencies_csv(db=db, run_id=run_id or "", csv_path=tmp_path)
+        rows = result.get("rows_ingested", 0)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to ingest dependencies CSV: {e}")
+
+    return {
+        "kind": "dependencies",
+        "rows_ingested": rows,
+        "run_id": run_id,
+        "message": f"Ingested {rows} dependency rows.",
+    }
+
+@router.post("/os")
+async def ingest_os(
+    file: UploadFile = File(..., description="OS & software metadata CSV"),
+    run_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Ingest OS & software metadata for servers.
+    """
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded OS metadata CSV is empty.")
+
+    tmp_path = "/tmp/ingest_os_metadata.csv"
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(contents)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write temp OS CSV: {e}")
+
+    try:
+        result = ingest_os_csv(db=db, run_id=run_id or "", csv_path=tmp_path)
+        rows = result.get("rows_ingested", 0)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to ingest OS CSV: {e}")
+
+    return {
+        "kind": "os_metadata",
+        "rows_ingested": rows,
+        "run_id": run_id,
+        "message": f"Ingested {rows} OS metadata rows.",
+    }
+
+
+@router.post("/licensing")
+async def ingest_licensing(
+    file: UploadFile = File(..., description="Licensing metadata CSV"),
+    run_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Ingest licensing metadata.
+    """
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded licensing CSV is empty.")
+
+    tmp_path = "/tmp/ingest_licensing.csv"
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(contents)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write temp licensing CSV: {e}")
+
+    try:
+        result = ingest_licensing_csv(db=db, run_id=run_id or "", csv_path=tmp_path)
+        rows = result.get("rows_ingested", 0)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to ingest licensing CSV: {e}")
+
+    return {
+        "kind": "licensing",
+        "rows_ingested": rows,
+        "run_id": run_id,
+        "message": f"Ingested {rows} licensing rows.",
+    }
+
+
+@router.post("/utilization")
+async def ingest_utilization(
+    file: UploadFile = File(..., description="Utilization metrics CSV"),
+    run_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Ingest utilization metrics for servers.
+    """
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded utilization CSV is empty.")
+
+    tmp_path = "/tmp/ingest_utilization.csv"
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(contents)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write temp utilization CSV: {e}")
+
+    try:
+        result = ingest_utilization_csv(db=db, run_id=run_id or "", csv_path=tmp_path)
+        rows = result.get("rows_ingested", 0)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to ingest utilization CSV: {e}")
+
+    return {
+        "kind": "utilization",
+        "rows_ingested": rows,
+        "run_id": run_id,
+        "message": f"Ingested {rows} utilization rows.",
+    }
+
+@router.post("/applications")
+async def ingest_applications(
+    file: UploadFile = File(..., description="Applications CSV"),
+    run_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Ingest an applications CSV. For now we do NOT increment any run counters.
+    """
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded applications CSV is empty.")
+
+    tmp_path = "/tmp/ingest_applications.csv"
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(contents)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write temp applications CSV: {e}")
+
+    try:
+        result = ingest_applications_csv(db=db, run_id=run_id or "", csv_path=tmp_path)
+        rows = result.get("rows_ingested", 0)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to ingest applications CSV: {e}")
+
+    return {
+        "kind": "applications",
+        "rows_ingested": rows,
+        "run_id": run_id,
+        "message": f"Ingested {rows} application rows.",
+    }

@@ -1,0 +1,209 @@
+from __future__ import annotations
+
+import csv
+import io
+from pathlib import Path
+from typing import Any, Dict, List, Tuple, Type
+
+from fastapi import HTTPException, UploadFile
+from sqlalchemy.orm import Session
+
+from app.models.run import Run
+from app.models.server import Server
+from app.models.storage import Storage
+from app.models.networks import Network
+from app.models.database import Database
+from app.models.application import Application
+from app.models.app_dependency import AppDependency
+from app.models.os_metadata import OsMetadata
+from app.models.utilization_metric import UtilizationMetric
+from app.models.business_metadata import BusinessMetadata
+from app.models.licensing_metadata import LicensingMetadata
+
+# Where all uploaded CSVs will be stored
+UPLOAD_BASE = Path("/tmp/cloudready_uploads")
+
+
+def _ensure_upload_dir() -> Path:
+    """
+    Ensure the upload directory exists and return it.
+    """
+    UPLOAD_BASE.mkdir(parents=True, exist_ok=True)
+    return UPLOAD_BASE
+
+
+def get_run_or_404(db: Session, run_id: str) -> Run:
+    """
+    Ensure the Run exists, or raise 404.
+    Assumes Run has a 'run_id' column (e.g. 'run-12858861').
+    """
+    run = db.query(Run).filter(Run.run_id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    return run
+
+
+def save_upload_file(slice_name: str, run_id: str, upload_file: UploadFile) -> str:
+    """
+    Save the uploaded file under /tmp/cloudready_uploads and return the path.
+    """
+    upload_dir = _ensure_upload_dir()
+    original_name = Path(upload_file.filename or f"{slice_name}.csv").name
+    target_path = upload_dir / f"{slice_name}_{run_id}_{original_name}"
+
+    upload_file.file.seek(0)
+    with target_path.open("wb") as f:
+        f.write(upload_file.file.read())
+    upload_file.file.seek(0)
+
+    return str(target_path)
+
+
+def parse_csv(upload_file: UploadFile) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """
+    Parse a CSV file into a list of dicts and return (rows, columns).
+    Accepts UTF-8 / UTF-8-SIG with headers in the first line.
+    """
+    upload_file.file.seek(0)
+    raw_bytes = upload_file.file.read()
+    upload_file.file.seek(0)
+
+    try:
+        text = raw_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        # Fallback if weird encoding
+        text = raw_bytes.decode("latin-1")
+
+    f = io.StringIO(text)
+    reader = csv.DictReader(f)
+    rows: List[Dict[str, Any]] = list(reader)
+    columns: List[str] = reader.fieldnames or []
+    return rows, columns
+
+
+def _set_attr_safely(obj: Any, key: str, value: Any) -> None:
+    """
+    Set an attribute on the ORM object if it exists.
+    Convert numeric strings to int/float when possible.
+    """
+    if not hasattr(obj, key):
+        return
+
+    if value is None or value == "":
+        return
+
+    # Simple type coercion: try int, then float, otherwise leave as string
+    coerced: Any = value
+    if isinstance(value, str):
+        v = value.strip()
+        if v == "":
+            return
+        try:
+            coerced = int(v)
+        except ValueError:
+            try:
+                coerced = float(v)
+            except ValueError:
+                coerced = v
+
+    setattr(obj, key, coerced)
+
+
+def ingest_csv_slice(
+    db: Session,
+    run_id: str,
+    upload_file: UploadFile,
+    slice_name: str,
+    model_cls: Type[Any],
+) -> Dict[str, Any]:
+    """
+    Generic ingestion function:
+
+    1) Ensures Run exists
+    2) Saves CSV to /tmp/cloudready_uploads
+    3) Parses CSV rows and maps columns to ORM model attributes (best-effort)
+    4) Attaches run_id if the model has a 'run_id' field
+    5) Commits to DB
+    """
+    # 1) Validate run
+    run = get_run_or_404(db, run_id)
+
+    # 2) Parse CSV
+    rows, columns = parse_csv(upload_file)
+
+    if not rows:
+        raise HTTPException(status_code=400, detail="CSV appears to be empty or has no data rows")
+
+    # 3) Save CSV
+    saved_path = save_upload_file(slice_name, run_id, upload_file)
+
+    # 4) Insert into DB
+    created_count = 0
+    for row in rows:
+        obj = model_cls()  # type: ignore[call-arg]
+
+        # Map CSV columns -> ORM attributes (best effort)
+        for key, value in row.items():
+            _set_attr_safely(obj, key, value)
+
+        # Attach run_id if present on the model
+        if hasattr(obj, "run_id") and getattr(obj, "run_id", None) in (None, ""):
+            setattr(obj, "run_id", run.run_id)
+
+        db.add(obj)
+        created_count += 1
+
+    db.commit()
+
+    return {
+        "status": "ok",
+        "message": f"{slice_name.capitalize()} CSV ingested successfully",
+        "run_id": run_id,
+        "entity": slice_name,
+        "rows_ingested": created_count,
+        "columns": columns,
+        "csv_path": saved_path,
+    }
+
+
+# --- Slice-specific convenience wrappers ------------------------------------
+
+
+def ingest_servers(db: Session, run_id: str, upload_file: UploadFile) -> Dict[str, Any]:
+    return ingest_csv_slice(db, run_id, upload_file, "servers", Server)
+
+
+def ingest_storage(db: Session, run_id: str, upload_file: UploadFile) -> Dict[str, Any]:
+    return ingest_csv_slice(db, run_id, upload_file, "storage", Storage)
+
+
+def ingest_network(db: Session, run_id: str, upload_file: UploadFile) -> Dict[str, Any]:
+    return ingest_csv_slice(db, run_id, upload_file, "network", Network)
+
+
+def ingest_databases(db: Session, run_id: str, upload_file: UploadFile) -> Dict[str, Any]:
+    return ingest_csv_slice(db, run_id, upload_file, "databases", Database)
+
+
+def ingest_applications(db: Session, run_id: str, upload_file: UploadFile) -> Dict[str, Any]:
+    return ingest_csv_slice(db, run_id, upload_file, "applications", Application)
+
+
+def ingest_dependencies(db: Session, run_id: str, upload_file: UploadFile) -> Dict[str, Any]:
+    return ingest_csv_slice(db, run_id, upload_file, "dependencies", AppDependency)
+
+
+def ingest_os_software(db: Session, run_id: str, upload_file: UploadFile) -> Dict[str, Any]:
+    return ingest_csv_slice(db, run_id, upload_file, "os_software", OsMetadata)
+
+
+def ingest_utilization(db: Session, run_id: str, upload_file: UploadFile) -> Dict[str, Any]:
+    return ingest_csv_slice(db, run_id, upload_file, "utilization", UtilizationMetric)
+
+
+def ingest_business(db: Session, run_id: str, upload_file: UploadFile) -> Dict[str, Any]:
+    return ingest_csv_slice(db, run_id, upload_file, "business", BusinessMetadata)
+
+
+def ingest_licensing(db: Session, run_id: str, upload_file: UploadFile) -> Dict[str, Any]:
+    return ingest_csv_slice(db, run_id, upload_file, "licensing", LicensingMetadata)

@@ -1,0 +1,4 @@
+volume_id,server_id,size_gb,storage_type
+vol-aaa,srv-1001,500,ssd
+vol-bbb,srv-1002,2000,hdd
+vol-ccc,srv-1003,250,ssd

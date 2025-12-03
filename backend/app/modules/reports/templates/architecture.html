@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}{{ meta.title or "Target Cloud Architecture" }}{% endblock %}
+{% block report_title %}Target Architecture{% endblock %}
+
+{% block content %}
+  <p class="meta-line">
+    Client: {{ meta.client_name }} &nbsp;|&nbsp;
+    Run ID: {{ meta.run_id }} &nbsp;|&nbsp;
+    Target Cloud: {{ target_cloud or "TBD" }}
+  </p>
+
+  <h2 class="section-title">Target Architecture Overview</h2>
+  <p>
+    {{ executive_summary }}
+  </p>
+
+  <div class="diagram-placeholder">
+    High-level target architecture diagram appears here (Landing Zone, network
+    segmentation, core services, security controls).
+  </div>
+
+  <h2 class="section-title">Landing Zone Design</h2>
+  <p>
+    This section describes the proposed landing zone aligned to enterprise best
+    practices for account structure, identity, security, and networking.
+  </p>
+  {% if landing_zone %}
+    <ul>
+      {% for key, value in landing_zone.items() %}
+        <li><strong>{{ key }}:</strong> {{ value }}</li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p>Landing zone details have not yet been populated for this assessment.</p>
+  {% endif %}
+
+  <h2 class="section-title">Network Topology</h2>
+  {% if network_topology %}
+    <p>
+      The target network design implements hub-and-spoke segmentation, centralized
+      inspection, and controlled connectivity back to on-premises or other clouds.
+    </p>
+    <ul>
+      {% for key, value in network_topology.items() %}
+        <li><strong>{{ key }}:</strong> {{ value }}</li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p>Network topology details have not yet been populated for this assessment.</p>
+  {% endif %}
+
+  <h2 class="section-title">Security &amp; Compliance Model</h2>
+  {% if security_model %}
+    <ul>
+      {% for key, value in security_model.items() %}
+        <li><strong>{{ key }}:</strong> {{ value }}</li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p>
+      Security model details will be populated once controls, logging, monitoring, and
+      access patterns are defined for the target environment.
+    </p>
+  {% endif %}
+
+  <h2 class="section-title">Data Platform &amp; Modernization</h2>
+  {% if data_platform %}
+    <ul>
+      {% for key, value in data_platform.items() %}
+        <li><strong>{{ key }}:</strong> {{ value }}</li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p>
+      Data platform details will be populated as databases and analytics workloads are
+      mapped to cloud-native services.
+    </p>
+  {% endif %}
+
+  <h2 class="section-title">Migration Waves</h2>
+  {% if migration_waves %}
+    <table>
+      <thead>
+        <tr>
+          <th>Wave</th>
+          <th>Scope</th>
+          <th>Objectives</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for wave in migration_waves %}
+          <tr>
+            <td>{{ wave.id or loop.index }}</td>
+            <td>{{ wave.scope }}</td>
+            <td>{{ wave.objectives }}</td>
+            <td>{{ wave.notes or "" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>
+      Migration waves have not yet been sequenced. CloudReadyAI can group workloads
+      into waves based on risk, complexity, and business impact.
+    </p>
+  {% endif %}
+{% endblock %}

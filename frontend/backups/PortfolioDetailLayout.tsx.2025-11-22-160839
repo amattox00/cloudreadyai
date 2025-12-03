@@ -1,0 +1,28 @@
+import { NavLink, Outlet, useParams } from "react-router-dom";
+
+export default function PortfolioDetailLayout() {
+  const { portfolioId } = useParams();
+
+  const tabCls = "px-4 py-2 rounded-xl text-sm hover:bg-gray-100";
+  const active = "bg-gray-200 font-semibold";
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold">Portfolio: {portfolioId}</h1>
+          <p className="text-sm text-gray-500">Tie all workstreams here.</p>
+        </div>
+      </div>
+
+      <div className="flex gap-2 border-b pb-3">
+        <NavLink end to="overview" className={({isActive}) => \`\${tabCls} \${isActive?active:""}\`}>Overview</NavLink>
+        <NavLink to="diagrams" className={({isActive}) => \`\${tabCls} \${isActive?active:""}\`}>Diagrams</NavLink>
+        <NavLink to="costs" className={({isActive}) => \`\${tabCls} \${isActive?active:""}\`}>Costs</NavLink>
+        <NavLink to="reports" className={({isActive}) => \`\${tabCls} \${isActive?active:""}\`}>Reports</NavLink>
+      </div>
+
+      <Outlet />
+    </div>
+  );
+}

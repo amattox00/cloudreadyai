@@ -1,0 +1,12 @@
+nohup: ignoring input
+
+> cloudready-frontend@0.1.0 dev
+> vite --host 0.0.0.0 --port 3001
+
+
+  VITE v5.4.21  ready in 185 ms
+
+  ➜  Local:   http://localhost:3001/
+  ➜  Network: http://172.31.28.99:3001/
+  ➜  Network: http://172.21.0.1:3001/
+  ➜  Network: http://172.18.0.1:3001/

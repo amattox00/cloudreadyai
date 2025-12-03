@@ -1,0 +1,29 @@
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    container_name: cloudready-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    mem_limit: 2g
+    restart: unless-stopped
+    depends_on:
+      - worker
+
+  worker:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    container_name: cloudready-worker
+    env_file:
+      - ../.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["bash", "-c", "cd /app/backend && rq worker"]
+    mem_limit: 1g
+    restart: unless-stopped

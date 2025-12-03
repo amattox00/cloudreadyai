@@ -1,0 +1,114 @@
+from __future__ import annotations
+
+from typing import Dict, Any, List
+from pathlib import Path
+import csv
+import shutil
+
+from fastapi import (
+    APIRouter,
+    UploadFile,
+    File,
+    Form,
+    HTTPException,
+)
+
+router = APIRouter(prefix="/v1/ingest", tags=["ingest"])
+
+# ============================================================
+#   SIMPLE SELF-CONTAINED INGEST HELPERS (MONOLITHIC VERSION)
+# ============================================================
+
+TEMP_UPLOAD_DIR = Path("/tmp/cloudready_uploads")
+
+
+def _ensure_temp_dir() -> None:
+    TEMP_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _validate_run_id(run_id: str) -> None:
+    if not run_id or not run_id.strip():
+        raise HTTPException(status_code=400, detail="run_id is required")
+
+
+def _save_temp_upload(upload_file: UploadFile, run_id: str, entity: str) -> Path:
+    _ensure_temp_dir()
+
+    original_name = upload_file.filename or "upload.csv"
+    safe_name = original_name.replace("/", "_").replace("\\", "_")
+
+    dest = TEMP_UPLOAD_DIR / f"{entity}_{run_id}_{safe_name}"
+
+    with dest.open("wb") as f:
+        shutil.copyfileobj(upload_file.file, f)
+
+    upload_file.file.seek(0)
+    return dest
+
+
+def _read_csv(path: Path) -> List[Dict[str, str]]:
+    if not path.exists():
+        raise HTTPException(status_code=500, detail=f"CSV not found at {path}")
+
+    with path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+    if not rows:
+        raise HTTPException(status_code=400, detail="CSV contains no data rows")
+
+    return rows
+
+
+def _ingest_csv_generic(run_id: str, upload_file: UploadFile, entity: str) -> Dict[str, Any]:
+    _validate_run_id(run_id)
+    csv_path = _save_temp_upload(upload_file, run_id, entity)
+    rows = _read_csv(csv_path)
+
+    return {
+        "run_id": run_id,
+        "entity": entity,
+        "rows_ingested": len(rows),
+        "columns": list(rows[0].keys()),
+        "csv_path": str(csv_path),
+    }
+
+
+# ============================================================
+#                      PUBLIC ROUTES
+# ============================================================
+
+@router.get("/routes")
+def list_routes() -> Dict[str, Any]:
+    return {
+        "routes": [
+            {"method": "POST", "path": "/v1/ingest/servers"},
+            {"method": "POST", "path": "/v1/ingest/storage"}
+        ]
+    }
+
+
+@router.post("/servers")
+async def ingest_servers(
+    run_id: str = Form(...),
+    file: UploadFile = File(...),
+) -> Dict[str, Any]:
+    result = _ingest_csv_generic(run_id, file, entity="servers")
+    return {
+        "status": "ok",
+        "message": "Servers CSV ingested successfully",
+        **result,
+    }
+
+
+@router.post("/storage")
+async def ingest_storage(
+    run_id: str = Form(...),
+    file: UploadFile = File(...),
+) -> Dict[str, Any]:
+    result = _ingest_csv_generic(run_id, file, entity="storage")
+    return {
+        "status": "ok",
+        "message": "Storage CSV ingested successfully",
+        **result,
+    }

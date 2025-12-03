@@ -1,0 +1,34 @@
+{
+  "workload_id": "wl-demo-phase7e",
+  "name": "Demo Workload Phase7E",
+  "description": "Demo workload created by Step 9 test",
+  "environment": "dev",
+  "deployment_model": "single_cloud",
+  "business": {
+    "owner": "Cloud Engineering",
+    "criticality": "medium",
+    "industry": "Demo",
+    "tags": [
+      "demo"
+    ]
+  },
+  "nodes": [
+    {
+      "node_id": "n1",
+      "name": "Demo App",
+      "role": "app",
+      "layer": "application",
+      "technology_type": "vm",
+      "platform": {
+        "location": "aws",
+        "service_hint": "ec2",
+        "region": null,
+        "account_id": null
+      },
+      "sizing": null,
+      "labels": [],
+      "metadata": {}
+    }
+  ],
+  "edges": []
+}

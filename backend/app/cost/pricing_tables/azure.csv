@@ -1,0 +1,6 @@
+cloud,service,region,metric,unit,price,meta
+azure,compute,any,vcpu_hour,hour,0.039,toy price
+azure,compute,any,gib_hour,hour,0.0045,toy price
+azure,storage,any,standard_gib_month,GB-month,0.02,toy price
+azure,storage,any,premium_gib_month,GB-month,0.12,toy price
+azure,network,any,egress_gib,GB,0.087,first tier

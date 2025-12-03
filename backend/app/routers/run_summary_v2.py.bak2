@@ -1,0 +1,482 @@
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from sqlalchemy import text
+
+from app.db import get_db
+
+router = APIRouter(
+    prefix="/v1/runs",
+    tags=["run-summary-v2"],
+)
+
+
+def _get_single_row(db: Session, sql: str, params: dict):
+    result = db.execute(text(sql), params)
+    row = result.mappings().first()
+    if row is None:
+        return None
+    return dict(row)
+
+
+def _get_multi_rows(db: Session, sql: str, params: dict):
+    result = db.execute(text(sql), params)
+    return [dict(r) for r in result.mappings().all()]
+
+
+# ----------------------------
+# Servers summary (v2 aware)
+# ----------------------------
+
+def get_servers_summary(db: Session, run_id: str) -> dict:
+    """
+    Prefer the v2 inventory_servers table, fall back to legacy servers
+    if needed so older data still works.
+    """
+
+    # 1) Try inventory_servers (v2 path)
+    inv_agg = _get_single_row(
+        db,
+        """
+        SELECT
+          COUNT(*) AS server_count,
+          COALESCE(SUM(cpu_count), 0) AS total_cpu_cores,
+          COALESCE(SUM(memory_gb), 0) AS total_ram_gb
+        FROM inventory_servers
+        WHERE run_id = :run_id
+        """,
+        {"run_id": run_id},
+    )
+
+    # If we have any servers in inventory_servers, use that as the source of truth
+    if inv_agg and inv_agg.get("server_count", 0) > 0:
+        inv_envs = _get_multi_rows(
+            db,
+            """
+            SELECT
+              COALESCE(NULLIF(environment, ''), 'unknown') AS environment,
+              COUNT(*) AS count
+            FROM inventory_servers
+            WHERE run_id = :run_id
+            GROUP BY COALESCE(NULLIF(environment, ''), 'unknown')
+            ORDER BY environment
+            """,
+            {"run_id": run_id},
+        )
+
+        return {
+            "totals": inv_agg,
+            "by_environment": inv_envs,
+        }
+
+    # 2) Fall back to legacy servers table if v2 is empty
+    legacy_agg = _get_single_row(
+        db,
+        """
+        SELECT
+          COUNT(*) AS server_count,
+          COALESCE(SUM(cpu_cores), 0) AS total_cpu_cores,
+          COALESCE(SUM(ram_gb), 0) AS total_ram_gb
+        FROM servers
+        WHERE run_id = :run_id
+        """,
+        {"run_id": run_id},
+    ) or {"server_count": 0, "total_cpu_cores": 0, "total_ram_gb": 0}
+
+    legacy_envs = _get_multi_rows(
+        db,
+        """
+        SELECT
+          COALESCE(NULLIF(environment, ''), 'unknown') AS environment,
+          COUNT(*) AS count
+        FROM servers
+        WHERE run_id = :run_id
+        GROUP BY COALESCE(NULLIF(environment, ''), 'unknown')
+        ORDER BY environment
+        """,
+        {"run_id": run_id},
+    )
+
+    return {
+        "totals": legacy_agg,
+        "by_environment": legacy_envs,
+    }
+
+
+# ----------------------------
+# Storage summary (legacy for now)
+# ----------------------------
+
+def get_storage_summary(db: Session, run_id: str) -> dict:
+    agg = _get_single_row(
+        db,
+        """
+        SELECT
+          COUNT(*) AS volume_count,
+          COALESCE(SUM(size_gb), 0) AS total_size_gb
+        FROM storage
+        WHERE run_id = :run_id
+        """,
+        {"run_id": run_id},
+    ) or {"volume_count": 0, "total_size_gb": 0}
+
+    by_type = _get_multi_rows(
+        db,
+        """
+        SELECT
+          COALESCE(NULLIF(type, ''), 'unknown') AS storage_type,
+          COUNT(*) AS count,
+          COALESCE(SUM(size_gb), 0) AS total_size_gb
+        FROM storage
+        WHERE run_id = :run_id
+        GROUP BY COALESCE(NULLIF(type, ''), 'unknown')
+        ORDER BY storage_type
+        """,
+        {"run_id": run_id},
+    )
+
+    return {
+        "totals": agg,
+        "by_type": by_type,
+    }
+
+
+# ----------------------------
+# Network summary
+# ----------------------------
+
+def get_network_summary(db: Session, run_id: str) -> dict:
+    # We keep this light because inventory_networks schema can evolve.
+    agg = _get_single_row(
+        db,
+        """
+        SELECT
+          COUNT(*) AS device_count
+        FROM inventory_networks
+        WHERE run_id = :run_id
+        """,
+        {"run_id": run_id},
+    ) or {"device_count": 0}
+
+    return agg
+
+
+# ----------------------------
+# Databases summary
+# ----------------------------
+
+def get_databases_summary(db: Session, run_id: str) -> dict:
+    agg = _get_single_row(
+        db,
+        """
+        SELECT
+          COUNT(*) AS db_count,
+          COALESCE(SUM(size_gb), 0) AS total_db_size_gb
+        FROM databases
+        WHERE run_id = :run_id
+        """,
+        {"run_id": run_id},
+    ) or {"db_count": 0, "total_db_size_gb": 0}
+
+    by_type = _get_multi_rows(
+        db,
+        """
+        SELECT
+          COALESCE(NULLIF(db_type, ''), 'unknown') AS db_type,
+          COUNT(*) AS count,
+          COALESCE(SUM(size_gb), 0) AS total_size_gb
+        FROM databases
+        WHERE run_id = :run_id
+        GROUP BY COALESCE(NULLIF(db_type, ''), 'unknown')
+        ORDER BY db_type
+        """,
+        {"run_id": run_id},
+    )
+
+    return {
+        "totals": agg,
+        "by_type": by_type,
+    }
+
+
+# ----------------------------
+# Applications summary
+# ----------------------------
+
+def get_applications_summary(db: Session, run_id: str) -> dict:
+    agg = _get_single_row(
+        db,
+        """
+        SELECT
+          COUNT(*) AS app_count
+        FROM applications
+        WHERE run_id = :run_id
+        """,
+        {"run_id": run_id},
+    ) or {"app_count": 0}
+
+    by_business_unit = _get_multi_rows(
+        db,
+        """
+        SELECT
+          COALESCE(NULLIF(business_unit, ''), 'unknown') AS business_unit,
+          COUNT(*) AS count
+        FROM applications
+        WHERE run_id = :run_id
+        GROUP BY COALESCE(NULLIF(business_unit, ''), 'unknown')
+        ORDER BY business_unit
+        """,
+        {"run_id": run_id},
+    )
+
+    by_criticality = _get_multi_rows(
+        db,
+        """
+        SELECT
+          COALESCE(NULLIF(criticality, ''), 'unknown') AS criticality,
+          COUNT(*) AS count
+        FROM applications
+        WHERE run_id = :run_id
+        GROUP BY COALESCE(NULLIF(criticality, ''), 'unknown')
+        ORDER BY criticality
+        """,
+        {"run_id": run_id},
+    )
+
+    return {
+        "totals": agg,
+        "by_business_unit": by_business_unit,
+        "by_criticality": by_criticality,
+    }
+
+
+# ----------------------------
+# Business metadata summary
+# ----------------------------
+
+def get_business_metadata_summary(db: Session, run_id: str) -> dict:
+    by_sla = _get_multi_rows(
+        db,
+        """
+        SELECT
+          COALESCE(NULLIF(sla_tier, ''), 'unknown') AS sla_tier,
+          COUNT(*) AS count
+        FROM business_metadata
+        WHERE run_id = :run_id
+        GROUP BY COALESCE(NULLIF(sla_tier, ''), 'unknown')
+        ORDER BY sla_tier
+        """,
+        {"run_id": run_id},
+    )
+
+    by_criticality = _get_multi_rows(
+        db,
+        """
+        SELECT
+          COALESCE(NULLIF(criticality, ''), 'unknown') AS criticality,
+          COUNT(*) AS count
+        FROM business_metadata
+        WHERE run_id = :run_id
+        GROUP BY COALESCE(NULLIF(criticality, ''), 'unknown')
+        ORDER BY criticality
+        """,
+        {"run_id": run_id},
+    )
+
+    return {
+        "by_sla_tier": by_sla,
+        "by_criticality": by_criticality,
+    }
+
+
+# ----------------------------
+# Dependencies summary
+# ----------------------------
+
+def get_dependencies_summary(db: Session, run_id: str) -> dict:
+    agg = _get_single_row(
+        db,
+        """
+        SELECT
+          COUNT(*) AS dependency_count,
+          COUNT(DISTINCT app_id) AS apps_with_dependencies
+        FROM app_dependencies
+        WHERE run_id = :run_id
+        """,
+        {"run_id": run_id},
+    ) or {"dependency_count": 0, "apps_with_dependencies": 0}
+
+    return agg
+
+
+# ----------------------------
+# OS summary
+# ----------------------------
+
+def get_os_summary(db: Session, run_id: str) -> dict:
+    by_family = _get_multi_rows(
+        db,
+        """
+        SELECT
+          COALESCE(NULLIF(os_family, ''), 'unknown') AS os_family,
+          COUNT(*) AS count
+        FROM os_metadata
+        WHERE run_id = :run_id
+        GROUP BY COALESCE(NULLIF(os_family, ''), 'unknown')
+        ORDER BY os_family
+        """,
+        {"run_id": run_id},
+    )
+
+    by_name = _get_multi_rows(
+        db,
+        """
+        SELECT
+          COALESCE(NULLIF(os_name, ''), 'unknown') AS os_name,
+          COUNT(*) AS count
+        FROM os_metadata
+        WHERE run_id = :run_id
+        GROUP BY COALESCE(NULLIF(os_name, ''), 'unknown')
+        ORDER BY os_name
+        """,
+        {"run_id": run_id},
+    )
+
+    return {
+        "by_family": by_family,
+        "by_name": by_name,
+    }
+
+
+# ----------------------------
+# Licensing summary
+# ----------------------------
+
+def get_licensing_summary(db: Session, run_id: str) -> dict:
+    by_vendor = _get_multi_rows(
+        db,
+        """
+        SELECT
+          COALESCE(NULLIF(vendor, ''), 'unknown') AS vendor,
+          COUNT(*) AS license_records,
+          COALESCE(SUM(license_count), 0) AS total_licenses
+        FROM licensing_metadata
+        WHERE run_id = :run_id
+        GROUP BY COALESCE(NULLIF(vendor, ''), 'unknown')
+        ORDER BY vendor
+        """,
+        {"run_id": run_id},
+    )
+
+    by_product = _get_multi_rows(
+        db,
+        """
+        SELECT
+          COALESCE(NULLIF(product_name, ''), 'unknown') AS product_name,
+          COUNT(*) AS license_records,
+          COALESCE(SUM(license_count), 0) AS total_licenses
+        FROM licensing_metadata
+        WHERE run_id = :run_id
+        GROUP BY COALESCE(NULLIF(product_name, ''), 'unknown')
+        ORDER BY product_name
+        """,
+        {"run_id": run_id},
+    )
+
+    return {
+        "by_vendor": by_vendor,
+        "by_product": by_product,
+    }
+
+
+# ----------------------------
+# Utilization summary
+# ----------------------------
+
+def get_utilization_summary(db: Session, run_id: str) -> dict:
+    agg = _get_single_row(
+        db,
+        """
+        SELECT
+          COUNT(*) AS servers_with_metrics,
+          COALESCE(AVG(cpu_avg), 0) AS avg_cpu_avg,
+          COALESCE(AVG(cpu_peak), 0) AS avg_cpu_peak,
+          COALESCE(AVG(ram_avg_gb), 0) AS avg_ram_avg_gb,
+          COALESCE(AVG(ram_peak_gb), 0) AS avg_ram_peak_gb
+        FROM utilization_metrics
+        WHERE run_id = :run_id
+        """,
+        {"run_id": run_id},
+    ) or {
+        "servers_with_metrics": 0,
+        "avg_cpu_avg": 0,
+        "avg_cpu_peak": 0,
+        "avg_ram_avg_gb": 0,
+        "avg_ram_peak_gb": 0,
+    }
+
+    return agg
+
+
+# ----------------------------
+# Main route
+# ----------------------------
+
+@router.get("/{run_id}/summary/v2")
+def get_run_summary_v2(run_id: str, db: Session = Depends(get_db)):
+    """
+    Unified Phase C summary for a run.
+
+    We *infer* existence of the run from ingested data instead of relying
+    on a 'runs' table, since some environments may not have that table.
+    """
+    # Check if this run_id appears in any core ingestion table
+    core_row = db.execute(
+        text(
+            """
+            SELECT 1
+            FROM (
+              SELECT run_id FROM inventory_servers WHERE run_id = :run_id
+              UNION
+              SELECT run_id FROM servers WHERE run_id = :run_id
+              UNION
+              SELECT run_id FROM storage WHERE run_id = :run_id
+              UNION
+              SELECT run_id FROM inventory_networks WHERE run_id = :run_id
+              UNION
+              SELECT run_id FROM databases WHERE run_id = :run_id
+              UNION
+              SELECT run_id FROM applications WHERE run_id = :run_id
+            ) AS t
+            LIMIT 1
+            """
+        ),
+        {"run_id": run_id},
+    ).first()
+
+    if not core_row:
+        raise HTTPException(status_code=404, detail=f"No data found for run {run_id}")
+
+    servers = get_servers_summary(db, run_id)
+    storage = get_storage_summary(db, run_id)
+    network = get_network_summary(db, run_id)
+    databases = get_databases_summary(db, run_id)
+    applications = get_applications_summary(db, run_id)
+    business = get_business_metadata_summary(db, run_id)
+    dependencies = get_dependencies_summary(db, run_id)
+    osinfo = get_os_summary(db, run_id)
+    licensing = get_licensing_summary(db, run_id)
+    utilization = get_utilization_summary(db, run_id)
+
+    return {
+        "run_id": run_id,
+        "servers": servers,
+        "storage": storage,
+        "network": network,
+        "databases": databases,
+        "applications": applications,
+        "business": business,
+        "dependencies": dependencies,
+        "os": osinfo,
+        "licensing": licensing,
+        "utilization": utilization,
+    }

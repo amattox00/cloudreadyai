@@ -1,0 +1,4 @@
+volume_id,server_id,size_gb,storage_type
+vol-001,app01,100,block
+vol-002,app02,250,block
+vol-003,app01,500,file

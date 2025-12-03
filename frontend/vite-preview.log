@@ -1,0 +1,10 @@
+nohup: ignoring input
+
+> cloudready-frontend@0.1.0 preview
+> vite preview --host 0.0.0.0 --port 3000
+
+Port 3000 is in use, trying another one...
+  ➜  Local:   http://localhost:3001/
+  ➜  Network: http://172.31.28.99:3001/
+  ➜  Network: http://172.21.0.1:3001/
+  ➜  Network: http://172.18.0.1:3001/

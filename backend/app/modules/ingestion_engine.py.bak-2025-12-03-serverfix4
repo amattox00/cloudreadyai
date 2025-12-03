@@ -1,0 +1,235 @@
+from __future__ import annotations
+
+import csv
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
+
+from sqlalchemy.orm import Session
+
+from app.models.server import Server
+from app.models.storage import Storage
+from app.models.networks import Network
+from app.models.database import Database
+from app.models.application import Application
+from app.models.app_dependency import AppDependency
+from app.models.utilization_metric import UtilizationMetric
+from app.models.business_metadata import BusinessMetadata
+from app.models.licensing_metadata import LicensingMetadata
+
+# Directory where uploaded CSVs are stored
+UPLOAD_ROOT = Path("/tmp/cloudready_uploads")
+
+
+def ensure_upload_root() -> None:
+    """Ensure the upload directory exists."""
+    UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+
+
+def load_csv(csv_path: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """
+    Load a CSV file into a list of dict rows + column names.
+
+    Uses utf-8-sig to play nicely with Excel-exported CSVs that may contain BOMs.
+    """
+    rows: List[Dict[str, Any]] = []
+    columns: List[str] = []
+
+    with csv_path.open("r", newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        columns = reader.fieldnames or []
+        for row in reader:
+            cleaned: Dict[str, Any] = {}
+            for k, v in row.items():
+                if v is None or v == "":
+                    cleaned[k] = None
+                else:
+                    cleaned[k] = v
+            rows.append(cleaned)
+
+    return rows, columns
+
+
+def persist_uploaded_file(slice_name: str, run_id: str, filename: str, file_bytes: bytes) -> Path:
+    """
+    Persist an uploaded CSV under /tmp/cloudready_uploads/<slice>_<run>_<filename>.
+    """
+    ensure_upload_root()
+
+    normalized_run_id = run_id.replace("/", "_")
+    safe_name = (filename or "upload.csv").replace("/", "_")
+
+    out_name = f"{slice_name}_{normalized_run_id}_{safe_name}"
+    out_path = UPLOAD_ROOT / out_name
+
+    with out_path.open("wb") as f:
+        f.write(file_bytes)
+
+    return out_path
+
+
+def ingestion_target_for_slice(slice_name: str) -> Any:
+    """
+    Map a logical ingestion slice to its SQLAlchemy model.
+    """
+    mapping = {
+        "servers": Server,
+        "storage": Storage,
+        "network": Network,
+        "databases": Database,
+        "applications": Application,
+        "dependencies": AppDependency,
+        "utilization": UtilizationMetric,
+        "business": BusinessMetadata,
+        "licensing": LicensingMetadata,
+        # Add OS/Software slice later once the model is finalized
+    }
+
+    if slice_name not in mapping:
+        raise ValueError(f"Unknown ingestion slice: {slice_name}")
+
+    return mapping[slice_name]
+
+
+def bulk_insert_from_csv(
+    db: Session,
+    run_id: str,
+    model_cls: Any,
+    csv_path: Path,
+    *,
+    entity_name: str,
+    extra_fields: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """
+    Generic CSV → SQLAlchemy bulk insert helper.
+
+    Assumes:
+    - CSV headers roughly match model field names.
+    - The model has a 'run_id' column (provided via extra_fields).
+    """
+    extra_fields = extra_fields or {}
+
+    rows, columns = load_csv(csv_path)
+    instances: List[Any] = []
+
+    for row in rows:
+        payload: Dict[str, Any] = {}
+
+        # Only copy fields that actually exist on the model
+        for key, value in row.items():
+            if not hasattr(model_cls, key):
+                continue
+            payload[key] = value
+
+        # Inject extra fields like run_id
+        payload.update(extra_fields)
+
+        instances.append(model_cls(**payload))
+
+    if instances:
+        db.add_all(instances)
+        db.commit()
+
+    return {
+        "status": "ok",
+        "message": f"{entity_name} CSV ingested successfully",
+        "run_id": run_id,
+        "entity": entity_name,
+        "rows_ingested": len(instances),
+        "columns": columns,
+        "csv_path": str(csv_path),
+    }
+
+
+def ingest_servers_from_csv(
+    db: Session,
+    *,
+    run_id: str,
+    filename: str,
+    file_bytes: bytes,
+) -> Dict[str, Any]:
+    """
+    Special-case ingestion for servers because the 'servers' table has a NOT NULL server_id
+    without a default. We generate server_id values here in Python.
+
+    Strategy:
+    - Persist CSV
+    - Load rows
+    - Compute next server_id = max(existing) + 1
+    - Insert rows with explicit server_id + run_id + matching CSV columns
+    """
+    csv_path = persist_uploaded_file("servers", run_id, filename, file_bytes)
+    rows, columns = load_csv(csv_path)
+
+    # Get current max server_id (if the table is empty, this will be None)
+    max_row = db.query(Server.server_id).order_by(Server.server_id.desc()).first()
+    current_max = max_row[0] if max_row and max_row[0] is not None else 0
+
+    try:
+        next_id = int(current_max)
+    except (TypeError, ValueError):
+        next_id = 0
+
+    instances: List[Server] = []
+
+    for idx, row in enumerate(rows, start=1):
+        payload: Dict[str, Any] = {}
+
+        # Explicit server_id and run_id
+        payload["server_id"] = next_id + idx
+        payload["run_id"] = run_id
+
+        # Copy known fields from CSV if they exist on the model
+        for key, value in row.items():
+            if not hasattr(Server, key):
+                continue
+            payload[key] = value
+
+        instances.append(Server(**payload))
+
+    if instances:
+        db.add_all(instances)
+        db.commit()
+
+    return {
+        "status": "ok",
+        "message": "Servers CSV ingested successfully",
+        "run_id": run_id,
+        "entity": "servers",
+        "rows_ingested": len(instances),
+        "columns": columns,
+        "csv_path": str(csv_path),
+    }
+
+
+def ingest_csv_slice(
+    db: Session,
+    *,
+    slice_name: str,
+    run_id: str,
+    filename: str,
+    file_bytes: bytes,
+) -> Dict[str, Any]:
+    """
+    Orchestrate ingestion for a single slice.
+
+    For 'servers', use the special path; for all other slices, use the generic bulk inserter.
+    """
+    if slice_name == "servers":
+        return ingest_servers_from_csv(
+            db,
+            run_id=run_id,
+            filename=filename,
+            file_bytes=file_bytes,
+        )
+
+    csv_path = persist_uploaded_file(slice_name, run_id, filename, file_bytes)
+    model_cls = ingestion_target_for_slice(slice_name)
+
+    return bulk_insert_from_csv(
+        db,
+        run_id=run_id,
+        model_cls=model_cls,
+        csv_path=csv_path,
+        entity_name=slice_name,
+        extra_fields={"run_id": run_id},
+    )

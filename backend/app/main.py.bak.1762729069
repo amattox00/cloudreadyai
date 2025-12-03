@@ -1,0 +1,46 @@
+import os
+from dotenv import load_dotenv
+from .orgs import router as orgs_router
+from .apikeys import router as apikeys_router
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.middleware import SlowAPIMiddleware
+from fastapi import FastAPI, HTTPException, status, Request
+from jose import jwt, JWTError
+import os
+from .auth import router as auth_router
+
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+app = FastAPI(title="CloudReadyAI")
+app.include_router(orgs_router)
+app.include_router(apikeys_router)
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+app.include_router(auth_router)
+
+JWT_SECRET = os.getenv("JWT_SECRET")
+JWT_ISSUER = os.getenv("JWT_ISSUER", "cloudreadyai")
+JWT_AUDIENCE = os.getenv("JWT_AUDIENCE", "cloudreadyai-app")
+
+def decode_access(token: str):
+    return jwt.decode(token, JWT_SECRET, audience=JWT_AUDIENCE, issuer=JWT_ISSUER, algorithms=["HS256"])
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
+
+@app.get("/me")
+def me(request: Request):
+    auth = request.headers.get("authorization") or request.headers.get("Authorization")
+    if not auth or not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    token = auth.split(" ", 1)[1]
+    try:
+        claims = decode_access(token)
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    return {"user_id": claims.get("sub"), "email": claims.get("email"), "roles": claims.get("roles", [])}
+
+from app.api.routes import cost as cost_routes
+app.include_router(cost_routes.router)

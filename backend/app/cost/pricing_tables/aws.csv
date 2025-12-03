@@ -1,0 +1,7 @@
+cloud,service,region,metric,unit,price,meta
+aws,compute,any,vcpu_hour,hour,0.0416,toy price
+aws,compute,any,gib_hour,hour,0.005,toy price
+aws,storage,any,standard_gib_month,GB-month,0.023,standard
+aws,storage,any,gp2_gib_month,GB-month,0.10,toy price
+aws,storage,any,gp3_gib_month,GB-month,0.08,toy price
+aws,network,any,egress_gib,GB,0.09,first tier

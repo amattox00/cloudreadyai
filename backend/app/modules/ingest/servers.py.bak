@@ -1,0 +1,154 @@
+import csv
+from pathlib import Path
+from typing import Dict, List
+
+from sqlalchemy.orm import Session
+from sqlalchemy import text
+
+
+class ServerIngestError(Exception):
+    """Custom exception for server ingestion errors."""
+
+
+def _validate_headers(fieldnames: List[str]) -> None:
+    """
+    Ensure the CSV has the columns we expect.
+
+    Expected headers:
+      server_id, hostname, environment, os_name, vcpu, ram_gb
+    """
+    required = {"server_id", "hostname", "environment", "os_name", "vcpu", "ram_gb"}
+    present = set(fieldnames or [])
+    missing = required - present
+    if missing:
+        raise ServerIngestError(
+            f"CSV missing required columns: {', '.join(sorted(missing))}"
+        )
+
+
+def _parse_int(value: str) -> int:
+    value = (value or "").strip()
+    if not value:
+        raise ValueError("Empty integer value")
+    return int(value)
+
+
+def _parse_float(value: str) -> float:
+    value = (value or "").strip()
+    if not value:
+        raise ValueError("Empty float value")
+    return float(value)
+
+
+def ingest_servers_csv(db: Session, run_id: str, csv_path: str) -> Dict[str, int]:
+    """
+    Ingest a server inventory CSV into the inventory_servers table.
+
+    CSV headers:
+      server_id, hostname, environment, os_name, vcpu, ram_gb
+
+    DB table: inventory_servers
+      id          INTEGER (PK, auto)
+      run_id      VARCHAR NOT NULL
+      hostname    VARCHAR
+      environment VARCHAR
+      os_name     VARCHAR
+      cpu_count   INTEGER
+      memory_gb   DOUBLE PRECISION
+      cluster     VARCHAR
+      ip_address  VARCHAR
+    """
+    path = Path(csv_path)
+
+    if not path.exists():
+        raise FileNotFoundError(f"Servers CSV not found: {csv_path}")
+
+    rows_read = 0
+    rows_created = 0
+    rows_skipped = 0
+    rows_error = 0
+    rows_updated = 0  # not doing updates in this version
+
+    insert_stmt = text(
+        """
+        INSERT INTO inventory_servers (
+            run_id,
+            hostname,
+            environment,
+            os_name,
+            cpu_count,
+            memory_gb,
+            cluster,
+            ip_address
+        )
+        VALUES (
+            :run_id,
+            :hostname,
+            :environment,
+            :os_name,
+            :cpu_count,
+            :memory_gb,
+            :cluster,
+            :ip_address
+        )
+        """
+    )
+
+    with path.open(newline="") as f:
+        reader = csv.DictReader(f)
+        _validate_headers(reader.fieldnames)
+
+        for row in reader:
+            rows_read += 1
+            if not row:
+                rows_skipped += 1
+                continue
+
+            try:
+                hostname = (row.get("hostname") or "").strip()
+                environment = (row.get("environment") or "").strip()
+                os_name = (row.get("os_name") or "").strip()
+                vcpu_raw = (row.get("vcpu") or "").strip()
+                ram_gb_raw = (row.get("ram_gb") or "").strip()
+
+                # Require at least hostname to consider valid
+                if not hostname:
+                    rows_skipped += 1
+                    continue
+
+                try:
+                    cpu_count = _parse_int(vcpu_raw)
+                    memory_gb = _parse_float(ram_gb_raw)
+                except ValueError:
+                    rows_skipped += 1
+                    continue
+
+                params = {
+                    "run_id": run_id,
+                    "hostname": hostname,
+                    "environment": environment,
+                    "os_name": os_name,
+                    "cpu_count": cpu_count,
+                    "memory_gb": memory_gb,
+                    # Optional fields not present in CSV today
+                    "cluster": None,
+                    "ip_address": None,
+                }
+
+                db.execute(insert_stmt, params)
+                rows_created += 1
+
+            except Exception as e:
+                print(f"[servers ingest] error on row {rows_read}: {e!r}")
+                rows_error += 1
+                continue
+
+    db.commit()
+
+    return {
+        "rows_read": rows_read,
+        "rows_created": rows_created,
+        "rows_updated": rows_updated,
+        "rows_skipped": rows_skipped,
+        "rows_error": rows_error,
+    }

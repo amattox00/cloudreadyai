@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+
+{% block title %}{{ meta.title or "Technical Assessment Report" }}{% endblock %}
+{% block report_title %}Technical Assessment{% endblock %}
+
+{% block content %}
+  <p class="meta-line">
+    Client: {{ meta.client_name }} &nbsp;|&nbsp;
+    Run ID: {{ meta.run_id }}
+  </p>
+
+  <h2 class="section-title">Technical Overview</h2>
+  <p>
+    {{ executive_summary }}
+  </p>
+
+  <h2 class="section-title">Server Inventory</h2>
+  {% if servers %}
+    <table>
+      <thead>
+        <tr>
+          <th>Server Name</th>
+          <th>Role</th>
+          <th>vCPU</th>
+          <th>RAM (GB)</th>
+          <th>OS</th>
+          <th>Environment</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in servers %}
+          <tr>
+            <td>{{ s.name }}</td>
+            <td>{{ s.role }}</td>
+            <td>{{ s.vcpu }}</td>
+            <td>{{ s.ram_gb }}</td>
+            <td>{{ s.os }}</td>
+            <td>{{ s.env or "Prod" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No server inventory has been attached to this assessment yet.</p>
+  {% endif %}
+
+  <h2 class="section-title">Storage Topology</h2>
+  {% if storage %}
+    <table>
+      <thead>
+        <tr>
+          <th>Volume</th>
+          <th>Server</th>
+          <th>Size (GB)</th>
+          <th>Type</th>
+          <th>Tier</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for v in storage %}
+          <tr>
+            <td>{{ v.volume_id }}</td>
+            <td>{{ v.server_id }}</td>
+            <td>{{ v.size_gb }}</td>
+            <td>{{ v.storage_type }}</td>
+            <td>{{ v.tier or "-" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No storage details are available for this assessment.</p>
+  {% endif %}
+
+  <h2 class="section-title">Network &amp; Connectivity</h2>
+  {% if network %}
+    <table>
+      <thead>
+        <tr>
+          <th>Subnet / VLAN</th>
+          <th>CIDR</th>
+          <th>Zone / Site</th>
+          <th>Purpose</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for n in network %}
+          <tr>
+            <td>{{ n.name }}</td>
+            <td>{{ n.cidr }}</td>
+            <td>{{ n.zone }}</td>
+            <td>{{ n.purpose }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No network segmentation has been documented for this run.</p>
+  {% endif %}
+
+  <h2 class="section-title">Application &amp; Dependency Map</h2>
+  {% if dependencies %}
+    <div class="diagram-placeholder">
+      Dependency graph visualization appears here (Applications → Databases →
+      Services).
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Source</th>
+          <th>Target</th>
+          <th>Protocol / Port</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for dep in dependencies %}
+          <tr>
+            <td>{{ dep.source }}</td>
+            <td>{{ dep.target }}</td>
+            <td>{{ dep.port or "-" }}</td>
+            <td>{{ dep.notes or "" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>
+      Dependencies have not yet been modeled for this run. Once dependency data is
+      ingested, the full application map will be rendered here.
+    </p>
+  {% endif %}
+{% endblock %}

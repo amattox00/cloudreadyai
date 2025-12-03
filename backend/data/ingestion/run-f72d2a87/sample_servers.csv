@@ -1,0 +1,3 @@
+hostname,cpu_cores,ram_gb,environment
+app01,4,16,prod
+app02,8,32,dev

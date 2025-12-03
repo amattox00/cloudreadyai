@@ -1,0 +1,5 @@
+cloud,service,region,metric,unit,price,meta
+gcp,compute,any,vcpu_hour,hour,0.038,toy price
+gcp,compute,any,gib_hour,hour,0.004,toy price
+gcp,storage,any,standard_gib_month,GB-month,0.020,toy price
+gcp,network,any,egress_gib,GB,0.085,first tier

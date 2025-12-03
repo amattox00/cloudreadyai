@@ -1,0 +1,31 @@
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
+from sqlalchemy.orm import Session
+from app.db import get_db
+
+from app.modules.ingest.servers import ServersIngestor
+from app.modules.ingest.storage import StorageIngestor
+
+router = APIRouter(prefix="/v1/ingest", tags=["Ingestion"])
+
+INGESTORS = {
+    "servers": ServersIngestor,
+    "storage": StorageIngestor,
+}
+
+@router.post("/{kind}")
+async def ingest_csv(
+    kind: str,
+    run_id: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    if kind not in INGESTORS:
+        raise HTTPException(status_code=400, detail=f"Unknown ingest type: {kind}")
+
+    ingestor_class = INGESTORS[kind]
+    ingestor = ingestor_class(db=db, run_id=run_id)
+
+    rows = await ingestor.process(file)
+    ingestor.update_ingestion_run(success=True, rows=rows)
+
+    return {"kind": kind, "rows_ingested": rows, "message": f"Ingested {rows} {kind} rows."}

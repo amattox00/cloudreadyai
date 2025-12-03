@@ -1,0 +1,166 @@
+from __future__ import annotations
+
+from typing import Any, Dict, List
+
+from fastapi import APIRouter, Depends, File, Form, UploadFile
+from sqlalchemy.orm import Session
+
+from app.db import get_db
+from app.modules.ingestion_engine import (
+    ingest_applications,
+    ingest_business,
+    ingest_databases,
+    ingest_dependencies,
+    ingest_licensing,
+    ingest_network,
+    ingest_os_software,
+    ingest_servers,
+    ingest_storage,
+    ingest_utilization,
+)
+
+router = APIRouter(prefix="/v1/ingest", tags=["Ingestion v2"])
+
+
+@router.get("/routes")
+def list_ingest_routes() -> Dict[str, Any]:
+    """
+    Simple introspection endpoint so we can curl /v1/ingest/routes
+    and see what endpoints are available.
+    """
+    routes: List[Dict[str, str]] = [
+        {"method": "POST", "path": "/v1/ingest/servers"},
+        {"method": "POST", "path": "/v1/ingest/storage"},
+        {"method": "POST", "path": "/v1/ingest/network"},
+        {"method": "POST", "path": "/v1/ingest/databases"},
+        {"method": "POST", "path": "/v1/ingest/applications"},
+        {"method": "POST", "path": "/v1/ingest/dependencies"},
+        {"method": "POST", "path": "/v1/ingest/os_software"},
+        {"method": "POST", "path": "/v1/ingest/utilization"},
+        {"method": "POST", "path": "/v1/ingest/business"},
+        {"method": "POST", "path": "/v1/ingest/licensing"},
+    ]
+    return {"routes": routes}
+
+
+# --- Slice endpoints ---------------------------------------------------------
+
+
+@router.post("/servers")
+def upload_servers_csv(
+    run_id: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Ingest Servers CSV.
+    """
+    return ingest_servers(db, run_id, file)
+
+
+@router.post("/storage")
+def upload_storage_csv(
+    run_id: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Ingest Storage CSV.
+    """
+    return ingest_storage(db, run_id, file)
+
+
+@router.post("/network")
+def upload_network_csv(
+    run_id: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Ingest Network CSV.
+    """
+    return ingest_network(db, run_id, file)
+
+
+@router.post("/databases")
+def upload_databases_csv(
+    run_id: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Ingest Databases CSV.
+    """
+    return ingest_databases(db, run_id, file)
+
+
+@router.post("/applications")
+def upload_applications_csv(
+    run_id: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Ingest Applications CSV.
+    """
+    return ingest_applications(db, run_id, file)
+
+
+@router.post("/dependencies")
+def upload_dependencies_csv(
+    run_id: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Ingest Application Dependencies CSV.
+    """
+    return ingest_dependencies(db, run_id, file)
+
+
+@router.post("/os_software")
+def upload_os_software_csv(
+    run_id: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Ingest OS / Software metadata CSV.
+    """
+    return ingest_os_software(db, run_id, file)
+
+
+@router.post("/utilization")
+def upload_utilization_csv(
+    run_id: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Ingest Utilization metrics CSV.
+    """
+    return ingest_utilization(db, run_id, file)
+
+
+@router.post("/business")
+def upload_business_csv(
+    run_id: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Ingest Business metadata CSV.
+    """
+    return ingest_business(db, run_id, file)
+
+
+@router.post("/licensing")
+def upload_licensing_csv(
+    run_id: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Ingest Licensing metadata CSV.
+    """
+    return ingest_licensing(db, run_id, file)

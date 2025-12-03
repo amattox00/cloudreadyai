@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}{{ meta.title or "Cloud Migration Assessment Summary" }}{% endblock %}
+{% block report_title %}Assessment Summary{% endblock %}
+
+{% block content %}
+  <p class="meta-line">
+    Client: {{ meta.client_name }} &nbsp;|&nbsp;
+    Run ID: {{ meta.run_id }}
+  </p>
+
+  <h2 class="section-title">Executive Overview</h2>
+  <p>
+    {{ executive_summary }}
+  </p>
+
+  <h2 class="section-title">Environment Snapshot</h2>
+  {% if environment.stats %}
+    <div class="grid">
+      {% for item in environment.stats %}
+        <div class="stat-card">
+          <div class="stat-label">{{ item.label }}</div>
+          <div class="stat-value">{{ item.value }}</div>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p>No environment statistics are available for this assessment.</p>
+  {% endif %}
+
+  <h2 class="section-title">Readiness Score</h2>
+  {% if r_score %}
+    <h3 class="subsection-title">Overall R-Score</h3>
+    <p>
+      <strong>Rating:</strong> {{ r_score.overall or "N/A" }}
+    </p>
+    <p>
+      <strong>Notes:</strong> {{ r_score.notes or "No additional notes." }}
+    </p>
+  {% else %}
+    <p>Readiness score data is not yet available.</p>
+  {% endif %}
+
+  <h2 class="section-title">Key Recommendations</h2>
+  {% if recommendations %}
+    {% for rec in recommendations %}
+      <div class="recommendation">
+        <div class="recommendation-title">
+          Recommendation {{ loop.index }}
+        </div>
+        <div class="recommendation-body">
+          {{ rec }}
+        </div>
+      </div>
+    {% endfor %}
+  {% else %}
+    <p>No recommendations have been generated for this run.</p>
+  {% endif %}
+
+  <h2 class="section-title">Target Architecture Overview</h2>
+  <div class="diagram-placeholder">
+    Target cloud architecture diagram will appear here (Landing Zone, VPC/VNet
+    layout, security, and core services).
+  </div>
+  <p>
+    CloudReadyAI can generate cloud-ready landing zone architectures and migration
+    sequencing that align with enterprise best practices for security, networking,
+    and resiliency.
+  </p>
+{% endblock %}

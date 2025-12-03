@@ -1,0 +1,107 @@
+{
+  "workload_id": "wl-sample-3tier-001",
+  "name": "Sample 3-Tier Web App",
+  "description": "Example workload for Diagram Generator 2.0 testing",
+  "environment": "prod",
+  "deployment_model": "single_cloud",
+  "business": {
+    "owner": "Application Team",
+    "criticality": "high",
+    "industry": "Example",
+    "tags": ["customer-facing", "sample"]
+  },
+  "nodes": [
+    {
+      "node_id": "n-clients",
+      "name": "Users / Clients",
+      "role": "client",
+      "layer": "presentation",
+      "technology_type": "other",
+      "platform": { "location": "other", "service_hint": "internet" },
+      "labels": ["external_users"],
+      "metadata": {}
+    },
+    {
+      "node_id": "n-alb",
+      "name": "Public Ingress",
+      "role": "edge",
+      "layer": "presentation",
+      "technology_type": "load_balancer",
+      "platform": { "location": "aws", "service_hint": "alb", "region": "us-east-2" },
+      "labels": [],
+      "metadata": {}
+    },
+    {
+      "node_id": "n-eks",
+      "name": "Web & API (EKS)",
+      "role": "app",
+      "layer": "application",
+      "technology_type": "k8s_pod",
+      "platform": { "location": "aws", "service_hint": "eks", "region": "us-east-2" },
+      "labels": [],
+      "metadata": {}
+    },
+    {
+      "node_id": "n-rds",
+      "name": "PostgreSQL Database",
+      "role": "data",
+      "layer": "data",
+      "technology_type": "database",
+      "platform": { "location": "aws", "service_hint": "rds", "region": "us-east-2" },
+      "labels": [],
+      "metadata": {}
+    },
+    {
+      "node_id": "n-redis",
+      "name": "Redis Cache",
+      "role": "cache",
+      "layer": "data",
+      "technology_type": "database",
+      "platform": { "location": "aws", "service_hint": "elasticache", "region": "us-east-2" },
+      "labels": [],
+      "metadata": {}
+    }
+  ],
+  "edges": [
+    {
+      "edge_id": "e1",
+      "source": "n-clients",
+      "target": "n-alb",
+      "relationship": "calls",
+      "protocol": "https",
+      "direction": "unidirectional",
+      "frequency": "sync",
+      "port": 443
+    },
+    {
+      "edge_id": "e2",
+      "source": "n-alb",
+      "target": "n-eks",
+      "relationship": "calls",
+      "protocol": "https",
+      "direction": "unidirectional",
+      "frequency": "sync",
+      "port": 443
+    },
+    {
+      "edge_id": "e3",
+      "source": "n-eks",
+      "target": "n-rds",
+      "relationship": "reads_from",
+      "protocol": "sql",
+      "direction": "bidirectional",
+      "frequency": "sync",
+      "port": 5432
+    },
+    {
+      "edge_id": "e4",
+      "source": "n-eks",
+      "target": "n-redis",
+      "relationship": "reads_from",
+      "protocol": "tcp",
+      "direction": "bidirectional",
+      "frequency": "sync",
+      "port": 6379
+    }
+  ]
+}

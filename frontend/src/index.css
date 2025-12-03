@@ -1,0 +1,123 @@
+@import "tailwindcss";
+
+/* === 5NINE Light Theme === */
+:root{
+  --brand-bg-main:#f6f6f5;          /* page background */
+  --brand-bg-sidebar:#1f2b2a;       /* sidebar background */
+  --brand-accent:#d46320;           /* primary accent (orange) */
+  --brand-accent-dark:#b34f17;
+
+  /* Panel styling */
+  --panel-bg:#eceff3;               /* soft grey fill for cards */
+  --panel-border:#b1bac5;           /* darker, bolder border tone */
+  --panel-radius:16px;
+  --panel-shadow:0 2px 6px rgba(0,0,0,.05);
+
+  --text:#111;
+  --text-muted:#555;
+}
+
+html,
+body,
+#root{
+  height:100%;
+  margin:0;
+  background:var(--brand-bg-main);
+  color:var(--text);
+  font-family:system-ui, sans-serif;
+}
+
+/* Sidebar */
+aside{
+  background:var(--brand-bg-sidebar);
+  color:#fff;
+}
+
+/* Headings */
+h1,
+h2,
+h3,
+h4{
+  color:var(--text);
+}
+
+/* ==== Panels / Cards (Dashboard, Portfolio, Diagrams, etc.) ==== */
+/* Use .panel on main UI cards. Also support a few generic aliases
+   without touching every component file. */
+.panel,
+.dashboard-card,
+.portfolio-card,
+.card,
+.box{
+  background:var(--panel-bg);
+  border:3px solid var(--panel-border); /* thicker, bolder line */
+  border-radius:var(--panel-radius);
+  box-shadow:var(--panel-shadow);
+}
+
+/* Thicker generic borders (rows, simple boxes, etc.) */
+.border,
+.border-2,
+.border-4{
+  border-color:var(--panel-border);
+  border-width:2px;
+}
+
+.border-b{
+  border-bottom:2px solid var(--panel-border);
+}
+
+/* Inputs look good on grey cards */
+input,
+select,
+textarea{
+  background:#fff;
+  color:var(--text);
+  border:2px solid var(--panel-border);
+  border-radius:8px;
+  padding:.5rem .6rem;
+}
+
+input:focus,
+select:focus,
+textarea:focus{
+  outline:none;
+  border-color:var(--brand-accent);
+}
+
+/* Buttons */
+button{
+  cursor:pointer;
+  font-weight:600;
+  border-radius:8px;
+  border:1px solid transparent;
+}
+
+button:hover{
+  opacity:.9;
+}
+
+/* Accent helpers */
+.btn-primary{
+  background:var(--brand-accent);
+  color:#fff;
+  border:1px solid var(--brand-accent-dark);
+}
+
+.bg-accent{
+  background:var(--brand-accent);
+  color:#fff;
+}
+
+.text-accent{
+  color:var(--brand-accent);
+}
+
+.hover-bg-accent:hover{
+  background:var(--brand-accent);
+  color:#fff;
+}
+
+.hover-bg-accent-ghost:hover{
+  background:rgba(230,116,42,.1);
+}
