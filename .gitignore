@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtualenv
+.venv/
+env/
+venv/
+
+# Node / frontend
+node_modules/
+dist/
+build/
+
+# Logs & temp
+*.log
+*.tmp
+
+# Backup archives
+backups/
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.bak
+
+# Env files
+.env
