@@ -134,3 +134,27 @@ async def ingest_os_metadata(
         ie.ingest_os_metadata, db, run_id, file, "os_metadata"
     )
 
+# TEMP STUBS: keep backend from crashing until these pieces are implemented
+def ingest_networks(*args, **kwargs):
+    """
+    Temporary placeholder for network ingestion.
+
+    This exists only so that app.routers.ingest can import ingest_networks
+    without crashing the backend. Replace with real implementation later.
+    """
+    return {
+        "rows_processed": 0,
+        "rows_successful": 0,
+        "rows_failed": 0,
+        "errors": ["Network ingestion not implemented yet."],
+    }
+
+
+def list_ingest_routes(*args, **kwargs):
+    """
+    Temporary placeholder for listing ingestion routes.
+
+    This exists only so that app.routers.ingest can import list_ingest_routes
+    without crashing the backend. Replace with real implementation later.
+    """
+    return []
