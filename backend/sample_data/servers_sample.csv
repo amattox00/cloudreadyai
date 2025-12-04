@@ -1,0 +1,5 @@
+hostname,environment,os,platform,vm_id,ip_address,subnet,datacenter,cluster_name,role,app_name,owner,criticality,cpu_cores,memory_gb,storage_gb,is_virtual,is_cloud,tags
+app01,prod,Windows,VMware,vm-101,10.0.1.10,10.0.1.0/24,DC1,ClusterA,app,CRM,AppTeam,High,4,16,200,true,false,tag1;tag2
+db01,prod,RHEL,VMware,vm-102,10.0.1.20,10.0.1.0/24,DC1,ClusterA,db,CRM,DBA,High,8,32,500,true,false,oracle
+web01,dev,Ubuntu,VMware,vm-103,10.0.2.10,10.0.2.0/24,LAB,DevCluster,web,Portal,DevTeam,Medium,2,8,100,true,false,frontend
+badrow1,prod,RHEL,VMware,vm-200,10.0.3.10,10.0.3.0/24,DC2,ClusterB,app,HR,HRTeam,High,not_a_number,16,200,true,false,badcpu
