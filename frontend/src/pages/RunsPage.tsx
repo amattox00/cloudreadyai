@@ -1,1116 +1,527 @@
-import React, {
-  useEffect,
-  useState,
-  FormEvent,
-  ChangeEvent,
-} from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import { RunSummaryV2 } from "../types/runSummaryV2";
+import React, { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 
 /**
- * Types for run registry and ingestion slices
+ * Types that mirror backend responses.
+ * Adjust field names if your actual API uses different keys.
  */
 
-type RunRegistryItem = {
+interface RunListItem {
   run_id: string;
-  status?: string | null;
-  created_at?: string | null;
-  updated_at?: string | null;
-  customer?: string | null;
+  created_at?: string;
+  status?: string;
   description?: string | null;
-};
-
-type SliceKey =
-  | "servers"
-  | "storage"
-  | "network"
-  | "databases"
-  | "applications"
-  | "business"
-  | "dependencies"
-  | "os"
-  | "licensing"
-  | "utilization";
-
-const INGESTION_SLICES: {
-  key: SliceKey;
-  label: string;
-  endpoint: string;
-  description: string;
-}[] = [
-  {
-    key: "servers",
-    label: "Servers",
-    endpoint: "/v1/ingest/servers",
-    description: "Core compute inventory (name, environment, CPU/RAM, role).",
-  },
-  {
-    key: "storage",
-    label: "Storage",
-    endpoint: "/v1/ingest/storage",
-    description: "Volumes, types, sizes, and performance tiers.",
-  },
-  {
-    key: "network",
-    label: "Network",
-    endpoint: "/v1/ingest/network",
-    description: "Subnets, VLANs, firewalls, and gateway devices.",
-  },
-  {
-    key: "databases",
-    label: "Databases",
-    endpoint: "/v1/ingest/databases",
-    description: "Database engines, sizes, and migration candidates.",
-  },
-  {
-    key: "applications",
-    label: "Applications",
-    endpoint: "/v1/ingest/applications",
-    description: "Logical app inventory, mapped to servers.",
-  },
-  {
-    key: "business",
-    label: "Business metadata",
-    endpoint: "/v1/ingest/business",
-    description: "Owner, business unit, SLA tier, RTO/RPO.",
-  },
-  {
-    key: "dependencies",
-    label: "App dependencies",
-    endpoint: "/v1/ingest/dependencies",
-    description: "App-to-app and app-to-DB links.",
-  },
-  {
-    key: "os",
-    label: "OS metadata",
-    endpoint: "/v1/ingest/os",
-    description: "OS families, versions, and primary roles.",
-  },
-  {
-    key: "licensing",
-    label: "Licensing",
-    endpoint: "/v1/ingest/licensing",
-    description: "Product names, vendors, license counts and models.",
-  },
-  {
-    key: "utilization",
-    label: "Utilization metrics",
-    endpoint: "/v1/ingest/utilization",
-    description: "CPU/RAM/storage utilization windows for sizing.",
-  },
-];
-
-function getSeverityClass(value?: number | null): string {
-  if (value == null || Number.isNaN(value)) {
-    return "text-slate-700";
-  }
-  if (value >= 90) {
-    return "text-red-600";
-  }
-  if (value >= 80) {
-    return "text-amber-600";
-  }
-  if (value >= 60) {
-    return "text-emerald-700";
-  }
-  return "text-slate-700";
 }
 
-type UtilizationSparklineProps = {
-  cpuAvg?: number;
-  cpuPeak?: number;
-  ramAvg?: number;
-  ramPeak?: number;
-};
-
-function UtilizationSparkline({
-  cpuAvg,
-  cpuPeak,
-  ramAvg,
-  ramPeak,
-}: UtilizationSparklineProps) {
-  const valuesRaw = [cpuAvg, cpuPeak, ramAvg, ramPeak].filter(
-    (v) => typeof v === "number" && !Number.isNaN(v),
-  ) as number[];
-
-  if (valuesRaw.length === 0) {
-    return (
-      <p className="text-xs text-slate-500">
-        No utilization metrics yet for this run.
-      </p>
-    );
-  }
-
-  const max = Math.max(...valuesRaw) || 1;
-  const values = valuesRaw.map((v) => (v / max) * 30); // normalize 0–30
-
-  const points = values
-    .map((v, idx) => {
-      const x =
-        values.length === 1 ? 50 : (idx / (values.length - 1)) * 100;
-      const y = 35 - v;
-      return `${x},${y}`;
-    })
-    .join(" ");
-
-  return (
-    <svg
-      viewBox="0 0 100 40"
-      className="w-full h-10 text-emerald-500"
-      aria-hidden="true"
-    >
-      <polyline
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={2}
-        points={points}
-      />
-    </svg>
-  );
+interface RunRegistryResponse {
+  runs: RunListItem[];
 }
 
-function computeCoverage(summary: RunSummaryV2 | null) {
-  if (!summary) {
-    return { completed: 0, total: 10, percent: 0, grade: "N/A" };
-  }
+interface RunSummaryV2 {
+  run_id: string;
+  coverage_grade?: string | null;
+  coverage_score?: number | null;
 
-  const checks: { key: SliceKey; present: boolean }[] = [
-    {
-      key: "servers",
-      present: (summary.servers?.totals?.server_count ?? 0) > 0,
-    },
-    {
-      key: "storage",
-      present: (summary.storage?.totals?.volume_count ?? 0) > 0,
-    },
-    {
-      key: "network",
-      present: (summary.network?.device_count ?? 0) > 0,
-    },
-    {
-      key: "databases",
-      present: (summary.databases?.totals?.db_count ?? 0) > 0,
-    },
-    {
-      key: "applications",
-      present: (summary.applications?.totals?.app_count ?? 0) > 0,
-    },
-    {
-      key: "business",
-      present: (summary.business?.by_sla_tier?.length ?? 0) > 0,
-    },
-    {
-      key: "dependencies",
-      present: (summary.dependencies?.dependency_count ?? 0) > 0,
-    },
-    {
-      key: "os",
-      present: (summary.os?.by_family?.length ?? 0) > 0,
-    },
-    {
-      key: "licensing",
-      present: (summary.licensing?.by_vendor?.length ?? 0) > 0,
-    },
-    {
-      key: "utilization",
-      present: (summary.utilization?.servers_with_metrics ?? 0) > 0,
-    },
-  ];
+  // Ingestion slice counts – adjust names if needed to match API
+  servers_count?: number | null;
+  storage_count?: number | null;
+  network_count?: number | null;
+  databases_count?: number | null;
+  applications_count?: number | null;
+  business_metadata_count?: number | null;
+  app_dependencies_count?: number | null;
+  os_metadata_count?: number | null;
+  licensing_count?: number | null;
+  utilization_count?: number | null;
 
-  const total = checks.length;
-  const completed = checks.filter((c) => c.present).length;
-  const percent = Math.round((completed / total) * 100);
-
-  let grade = "D";
-  if (percent >= 90) grade = "A";
-  else if (percent >= 75) grade = "B";
-  else if (percent >= 60) grade = "C";
-
-  return { completed, total, percent, grade };
+  ingestion_status?: string | null;
 }
 
-function formatDate(iso?: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString();
+interface ServerV2 {
+  hostname: string;
+  os?: string | null;
+  environment?: string | null;
+  vcpus?: number | null;
+  memory_gb?: number | null;
+  storage_gb?: number | null;
+}
+
+interface RunServersV2Response {
+  run_id: string;
+  total_servers: number;
+  servers: ServerV2[];
 }
 
 const RunsPage: React.FC = () => {
-  // Read optional newRunId passed from Dashboard "New Assessment"
-  const location = useLocation() as { state?: { newRunId?: string | null } };
-  const newRunIdFromNav =
-    (location.state?.newRunId || "").trim() || null;
-
-  const navigate = useNavigate();
-
-  const [runs, setRuns] = useState<RunRegistryItem[]>([]);
-  const [runsLoading, setRunsLoading] = useState(false);
+  // Run registry
+  const [runs, setRuns] = useState<RunListItem[]>([]);
+  const [isLoadingRuns, setIsLoadingRuns] = useState(false);
   const [runsError, setRunsError] = useState<string | null>(null);
 
+  // Selected run
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
-  const [summary, setSummary] = useState<RunSummaryV2 | null>(null);
-  const [summaryLoading, setSummaryLoading] = useState(false);
+  // Run summary (v2)
+  const [runSummary, setRunSummary] = useState<RunSummaryV2 | null>(null);
+  const [isLoadingSummary, setIsLoadingSummary] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
 
-  const [uploadSliceKey, setUploadSliceKey] =
-    useState<SliceKey>("servers");
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
-  const [uploadBusy, setUploadBusy] = useState(false);
-
-  const [runIdJump, setRunIdJump] = useState<string>("");
-
-  const trimmedRunId = selectedRunId?.trim() || "";
-  const { completed, total, percent, grade } = computeCoverage(summary);
+  // Servers (v2) for the selected run (Step 2 + Step 3)
+  const [serversV2, setServersV2] = useState<ServerV2[] | null>(null);
+  const [serversV2Count, setServersV2Count] = useState<number | null>(null);
+  const [isLoadingServersV2, setIsLoadingServersV2] = useState(false);
+  const [serversV2Error, setServersV2Error] = useState<string | null>(null);
 
   /**
-   * Load run registry on mount
+   * Helper: API base path.
+   * If your frontend already uses `/api/...` everywhere, set API_BASE = "/api".
+   * If it talks directly to FastAPI on same origin, leave it as "".
    */
+const API_BASE = "http://3.151.80.236:8000";
+
+  // Load run registry
   useEffect(() => {
-    let cancelled = false;
+    setIsLoadingRuns(true);
+    setRunsError(null);
 
-    async function loadRuns() {
-      try {
-        setRunsLoading(true);
-        setRunsError(null);
-
-        const res = await fetch("/v1/run_registry");
+    fetch(`${API_BASE}/run_registry`)
+      .then(async (res) => {
         if (!res.ok) {
-          throw new Error(`Run registry HTTP ${res.status}`);
+          const text = await res.text();
+          throw new Error(text || `Failed to load runs (status ${res.status})`);
         }
-
-        const json: any = await res.json();
-
-        // Backend returns { runs: [...] } now; be defensive.
-        const raw: RunRegistryItem[] = Array.isArray(json)
-          ? (json as RunRegistryItem[])
-          : ((json?.runs as RunRegistryItem[] | undefined) ?? []);
-
-        const cleaned = raw.filter(
-          (r) =>
-            r.run_id &&
-            r.run_id.trim() &&
-            r.run_id.trim() !== "undefined",
-        );
-
-        // If we arrived via "New Assessment", ensure that run appears
-        // in the registry list even if the backend doesn't know it yet.
-        let finalRuns = cleaned;
-
-        if (
-          newRunIdFromNav &&
-          !cleaned.some((r) => r.run_id === newRunIdFromNav)
-        ) {
-          const nowIso = new Date().toISOString();
-          const newRun: RunRegistryItem = {
-            run_id: newRunIdFromNav,
-            status: "NEW",
-            created_at: nowIso,
-            updated_at: nowIso,
-            customer: null,
-            description: "New assessment (no ingestion yet)",
-          };
-          finalRuns = [newRun, ...cleaned];
+        return res.json();
+      })
+      .then((data: RunRegistryResponse) => {
+        setRuns(data.runs || []);
+        if (!selectedRunId && data.runs && data.runs.length > 0) {
+          setSelectedRunId(data.runs[0].run_id);
         }
-
-        if (!cancelled) {
-          setRuns(finalRuns);
-
-          if (!selectedRunId) {
-            if (newRunIdFromNav) {
-              setSelectedRunId(newRunIdFromNav);
-            } else if (finalRuns.length > 0) {
-              setSelectedRunId(finalRuns[0].run_id);
-            } else {
-              setSelectedRunId(null);
-            }
-          }
-        }
-      } catch (err: any) {
-        if (!cancelled) {
-          setRunsError(err?.message || "Unable to load runs.");
-        }
-      } finally {
-        if (!cancelled) {
-          setRunsLoading(false);
-        }
-      }
-    }
-
-    loadRuns();
-    return () => {
-      cancelled = true;
-    };
+      })
+      .catch((err) => {
+        console.error("Error loading run registry", err);
+        setRunsError("Failed to load runs.");
+      })
+      .finally(() => {
+        setIsLoadingRuns(false);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /**
-   * Load summary when selectedRunId changes
-   */
+  // Load run summary (v2) when selectedRunId changes
   useEffect(() => {
-    if (!trimmedRunId) {
-      setSummary(null);
+    if (!selectedRunId) {
+      setRunSummary(null);
       setSummaryError(null);
       return;
     }
 
-    let cancelled = false;
+    setIsLoadingSummary(true);
+    setSummaryError(null);
 
-    async function loadSummary() {
-      try {
-        setSummaryLoading(true);
-        setSummaryError(null);
-
-        const res = await fetch(
-          `/v1/runs/${encodeURIComponent(trimmedRunId)}/summary/v2`,
-        );
-
-        if (res.status === 404) {
-          // Treat as "no summary yet" instead of a scary error
-          if (!cancelled) {
-            setSummary(null);
-            setSummaryError(null);
-          }
-          return;
-        }
-
+    fetch(`${API_BASE}/run_summary_v2/${selectedRunId}`)
+      .then(async (res) => {
         if (!res.ok) {
-          throw new Error(`Summary HTTP ${res.status}`);
-        }
-
-        const data = (await res.json()) as RunSummaryV2;
-
-        if (!cancelled) {
-          setSummary(data);
-        }
-      } catch (err: any) {
-        if (!cancelled) {
-          setSummaryError(
-            err?.message ||
-              "Unable to load summary for this run. Please confirm the Run ID.",
+          const text = await res.text();
+          throw new Error(
+            text || `Failed to load run summary (status ${res.status})`
           );
-          setSummary(null);
         }
-      } finally {
-        if (!cancelled) {
-          setSummaryLoading(false);
-        }
-      }
-    }
-
-    loadSummary();
-    return () => {
-      cancelled = true;
-    };
-  }, [trimmedRunId]);
-
-  /**
-   * Handle Target run dropdown change
-   */
-  const handleRunSelectChange = (e: ChangeEvent<HTMLSelectElement>) => {
-    const val = e.target.value;
-    setSelectedRunId(val || null);
-  };
-
-  /**
-   * Handle ingestion slice change
-   */
-  const handleSliceChange = (e: ChangeEvent<HTMLSelectElement>) => {
-    setUploadSliceKey(e.target.value as SliceKey);
-  };
-
-  /**
-   * Handle CSV file change
-   */
-  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0] || null;
-    setUploadFile(file);
-    setUploadStatus(null);
-  };
-
-  /**
-   * Upload CSV for selected slice
-   */
-  const handleUploadSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-
-    if (!trimmedRunId) {
-      setUploadStatus("Please select a target run first.");
-      return;
-    }
-
-    if (!uploadFile) {
-      setUploadStatus("Please choose a CSV file to upload.");
-      return;
-    }
-
-    const slice = INGESTION_SLICES.find(
-      (s) => s.key === uploadSliceKey,
-    );
-    if (!slice) {
-      setUploadStatus("Invalid ingestion slice selected.");
-      return;
-    }
-
-    try {
-      setUploadBusy(true);
-      setUploadStatus("Uploading...");
-
-      const formData = new FormData();
-      formData.append("file", uploadFile);
-      formData.append("run_id", trimmedRunId);
-
-      const res = await fetch(slice.endpoint, {
-        method: "POST",
-        body: formData,
+        return res.json();
+      })
+      .then((data: RunSummaryV2) => {
+        setRunSummary(data);
+      })
+      .catch((err) => {
+        console.error("Error loading run summary v2", selectedRunId, err);
+        setSummaryError("Failed to load run summary for this run.");
+      })
+      .finally(() => {
+        setIsLoadingSummary(false);
       });
+  }, [API_BASE, selectedRunId]);
 
-      if (!res.ok) {
-        throw new Error(
-          `Upload failed with HTTP ${res.status}. Check the CSV format.`,
-        );
-      }
-
-      setUploadStatus("Upload successful. Refreshing summary...");
-
-      // re-load summary after successful upload
-      const summaryRes = await fetch(
-        `/v1/runs/${encodeURIComponent(trimmedRunId)}/summary/v2`,
-      );
-      if (summaryRes.ok) {
-        const data = (await summaryRes.json()) as RunSummaryV2;
-        setSummary(data);
-      }
-    } catch (err: any) {
-      setUploadStatus(
-        err?.message ||
-          "Upload failed. Please check the CSV and try again.",
-      );
-    } finally {
-      setUploadBusy(false);
+  // Load servers (v2) when selectedRunId changes (Step 2)
+  useEffect(() => {
+    if (!selectedRunId) {
+      setServersV2(null);
+      setServersV2Count(null);
+      setServersV2Error(null);
+      return;
     }
-  };
 
-  /**
-   * Quick jump form submit
-   */
-  const handleRunJumpSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    const trimmed = runIdJump.trim();
-    if (!trimmed) return;
-    navigate(`/runs/${encodeURIComponent(trimmed)}`);
-  };
+    setIsLoadingServersV2(true);
+    setServersV2Error(null);
 
-  const coverageLabel =
-    total > 0 ? `${percent}% — Grade ${grade}` : "N/A";
+    fetch(`${API_BASE}/v2/run_details/${selectedRunId}/servers`)
+      .then(async (res) => {
+        if (!res.ok) {
+          if (res.status === 404) {
+            // No v2 servers for this run – perfectly fine for legacy runs.
+            setServersV2([]);
+            setServersV2Count(0);
+            return;
+          }
+          const text = await res.text();
+          throw new Error(
+            text || `Failed to load v2 servers (status ${res.status})`
+          );
+        }
+        return res.json();
+      })
+      .then((data: RunServersV2Response | undefined) => {
+        if (!data) return;
+        setServersV2(data.servers);
+        setServersV2Count(data.total_servers);
+      })
+      .catch((err) => {
+        console.error("Error loading v2 servers for run", selectedRunId, err);
+        setServersV2Error("Failed to load v2 servers for this run.");
+      })
+      .finally(() => {
+        setIsLoadingServersV2(false);
+      });
+  }, [API_BASE, selectedRunId]);
+
+  // Derived metrics for Run Details tile (Step 3: use v2 servers if available)
+  const legacyServersCount = runSummary?.servers_count ?? 0;
+  const effectiveServersCount =
+    serversV2Count && serversV2Count > 0 ? serversV2Count : legacyServersCount;
+  const serversMissing = effectiveServersCount === 0;
+
+  const storageCount = runSummary?.storage_count ?? 0;
+  const storageMissing = storageCount === 0;
+
+  const networkCount = runSummary?.network_count ?? 0;
+  const networkMissing = networkCount === 0;
+
+  const databasesCount = runSummary?.databases_count ?? 0;
+  const databasesMissing = databasesCount === 0;
+
+  const applicationsCount = runSummary?.applications_count ?? 0;
+  const applicationsMissing = applicationsCount === 0;
+
+  const businessMetadataCount = runSummary?.business_metadata_count ?? 0;
+  const businessMetadataMissing = businessMetadataCount === 0;
+
+  const appDependenciesCount = runSummary?.app_dependencies_count ?? 0;
+  const appDependenciesMissing = appDependenciesCount === 0;
+
+  const osMetadataCount = runSummary?.os_metadata_count ?? 0;
+  const osMetadataMissing = osMetadataCount === 0;
+
+  const licensingCount = runSummary?.licensing_count ?? 0;
+  const licensingMissing = licensingCount === 0;
+
+  const utilizationCount = runSummary?.utilization_count ?? 0;
+  const utilizationMissing = utilizationCount === 0;
+
+  const coverageGrade = runSummary?.coverage_grade ?? "N/A";
+  const coverageScore = runSummary?.coverage_score ?? null;
+  const ingestionStatus = runSummary?.ingestion_status ?? "Unknown";
+
+  const handleRunClick = (run: RunListItem) => {
+    setSelectedRunId(run.run_id);
+  };
 
   return (
-    <div className="px-6 py-6 lg:px-8 lg:py-8">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-semibold text-slate-900">
-          Runs &amp; Ingestion
-        </h1>
-        <Link
-          to="/dashboard"
-          className="inline-flex items-center rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-        >
-          Back to Dashboard
-        </Link>
-      </div>
-
-      <p className="text-sm text-slate-600 mb-6">
-        Create assessments, upload ingestion slices, and inspect run
-        details before jumping into Analysis, Portfolio, or Cost &amp; TCO.
-      </p>
-
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start">
-        {/* LEFT: Runs table + Ingestion workspace */}
-        <div className="xl:col-span-2 space-y-6">
-          {/* Assessment runs */}
-          <section className="bg-white border border-slate-200 rounded-xl shadow-sm">
-            <div className="border-b border-slate-200 px-5 py-4 flex items-center justify-between gap-4">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-900">
-                  Assessment runs
-                </h2>
-                <p className="mt-1 text-xs text-slate-600">
-                  Each run represents one CloudReadyAI assessment snapshot.
-                </p>
-              </div>
-            </div>
-
-            <div className="px-5 pt-3 pb-4 space-y-3">
-              {runsError && (
-                <div className="rounded-md bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700">
-                  {runsError}
-                </div>
-              )}
-
-              {!runsError && (
-                <p className="text-xs text-slate-500">
-                  Use the Dashboard to start a new assessment, or select
-                  from the run registry below.
-                </p>
-              )}
-
-              {/* Quick jump to run */}
-              <form
-                onSubmit={handleRunJumpSubmit}
-                className="flex flex-wrap items-center gap-2 text-xs text-slate-600"
-              >
-                <span>Quick jump to run:</span>
-                <input
-                  type="text"
-                  value={runIdJump}
-                  onChange={(e) => setRunIdJump(e.target.value)}
-                  placeholder="e.g. run-35073330"
-                  className="rounded-md border border-slate-300 px-2 py-1 text-xs font-mono"
-                />
-                <button
-                  type="submit"
-                  className="inline-flex items-center rounded-md bg-slate-900 px-2.5 py-1 text-xs font-semibold text-white hover:bg-slate-800"
-                >
-                  Go
-                </button>
-              </form>
-
-              <div className="overflow-x-auto rounded-lg border border-slate-200">
-                <table className="min-w-full divide-y divide-slate-200 text-xs">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="px-3 py-2 text-left font-semibold text-slate-700">
-                        Run ID
-                      </th>
-                      <th className="px-3 py-2 text-left font-semibold text-slate-700">
-                        Status
-                      </th>
-                      <th className="px-3 py-2 text-left font-semibold text-slate-700">
-                        Created
-                      </th>
-                      <th className="px-3 py-2 text-left font-semibold text-slate-700">
-                        Customer
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 bg-white">
-                    {runsLoading && (
-                      <tr>
-                        <td
-                          colSpan={4}
-                          className="px-3 py-3 text-center text-slate-500"
-                        >
-                          Loading runs...
-                        </td>
-                      </tr>
-                    )}
-
-                    {!runsLoading && runs.length === 0 && (
-                      <tr>
-                        <td
-                          colSpan={4}
-                          className="px-3 py-3 text-center text-slate-500"
-                        >
-                          No runs yet. Use the Dashboard to start your
-                          first assessment.
-                        </td>
-                      </tr>
-                    )}
-
-                    {runs.map((run) => {
-                      const isSelected =
-                        run.run_id === selectedRunId;
-                      return (
-                        <tr
-                          key={run.run_id}
-                          className={
-                            isSelected
-                              ? "bg-emerald-50/60"
-                              : "hover:bg-slate-50"
-                          }
-                          onClick={() =>
-                            setSelectedRunId(run.run_id)
-                          }
-                        >
-                          <td className="px-3 py-2 font-mono text-[0.7rem] text-slate-900">
-                            {run.run_id ? (
-                              <Link
-                                to={`/runs/${encodeURIComponent(
-                                  run.run_id,
-                                )}`}
-                                className="text-blue-600 hover:underline"
-                                onClick={(e) => {
-                                  // prevent row click from interfering
-                                  e.stopPropagation();
-                                }}
-                              >
-                                {run.run_id}
-                              </Link>
-                            ) : (
-                              "—"
-                            )}
-                          </td>
-                          <td className="px-3 py-2 text-slate-700">
-                            {run.status || "UNKNOWN"}
-                          </td>
-                          <td className="px-3 py-2 text-slate-700">
-                            {formatDate(run.created_at)}
-                          </td>
-                          <td className="px-3 py-2 text-slate-700">
-                            {run.customer || "—"}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              <p className="text-[0.7rem] text-slate-500">
-                Use the upload panel below to deepen coverage for the
-                selected run.
-              </p>
-            </div>
-          </section>
-
-          {/* Ingestion workspace */}
-          <section className="bg-white border border-slate-200 rounded-xl shadow-sm">
-            <div className="border-b border-slate-200 px-5 py-4 flex items-center justify-between gap-4">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-900">
-                  Ingestion workspace
-                </h2>
-                <p className="mt-1 text-xs text-slate-600">
-                  Choose a run, pick a slice, and upload a CSV file to
-                  enrich this assessment.
-                </p>
-              </div>
-              <span className="inline-flex items-center rounded-full bg-slate-50 border border-slate-200 px-3 py-1 text-xs font-medium text-slate-600">
-                Phase B / B3 / B4
-              </span>
-            </div>
-
-            <form
-              className="px-5 pt-4 pb-5 space-y-4"
-              onSubmit={handleUploadSubmit}
-            >
-              {/* Target run */}
-              <div className="space-y-1">
-                <label className="block text-xs font-medium text-slate-700">
-                  Target run
-                </label>
-                <select
-                  value={selectedRunId || ""}
-                  onChange={handleRunSelectChange}
-                  className="block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-orange-500 focus:ring-orange-500"
-                >
-                  <option value="">
-                    Select a run...
-                  </option>
-                  {runs.map((run) => (
-                    <option key={run.run_id} value={run.run_id}>
-                      {run.run_id}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-[0.7rem] text-slate-500">
-                  Data you upload will be attached to this assessment
-                  run.
-                </p>
-              </div>
-
-              {/* Ingestion slice */}
-              <div className="space-y-1">
-                <label className="block text-xs font-medium text-slate-700">
-                  Ingestion slice
-                </label>
-                <select
-                  value={uploadSliceKey}
-                  onChange={handleSliceChange}
-                  className="block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-orange-500 focus:ring-orange-500"
-                >
-                  {INGESTION_SLICES.map((slice) => (
-                    <option key={slice.key} value={slice.key}>
-                      {slice.label}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-[0.7rem] text-slate-500">
-                  {
-                    INGESTION_SLICES.find(
-                      (s) => s.key === uploadSliceKey,
-                    )?.description
-                  }
-                </p>
-              </div>
-
-              {/* CSV file */}
-              <div className="space-y-1">
-                <label className="block text-xs font-medium text-slate-700">
-                  CSV file
-                </label>
-                <input
-                  type="file"
-                  accept=".csv,text/csv"
-                  onChange={handleFileChange}
-                  className="block w-full text-xs text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-slate-900 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-slate-800"
-                />
-                <p className="text-[0.7rem] text-slate-500">
-                  Expecting CloudReadyAI sample schema per slice (servers,
-                  storage, apps, etc.).
-                </p>
-              </div>
-
-              {/* Status + submit */}
-              <div className="flex items-center justify-between gap-3">
-                <button
-                  type="submit"
-                  disabled={uploadBusy}
-                  className="inline-flex items-center justify-center rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  {uploadBusy ? "Uploading..." : "Upload & Ingest"}
-                </button>
-
-                {uploadStatus && (
-                  <p className="text-[0.7rem] text-slate-600">
-                    {uploadStatus}
-                  </p>
-                )}
-              </div>
-            </form>
-          </section>
+    <div className="p-6 space-y-6">
+      <header className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold">Runs</h1>
+          <p className="text-sm text-gray-600">
+            View ingestion runs, coverage, and details for your assessments.
+          </p>
         </div>
+        <div className="flex gap-3">
+          <Link
+            to="/"
+            className="px-3 py-1.5 text-sm border rounded-md hover:bg-gray-50"
+          >
+            Back to Dashboard
+          </Link>
+        </div>
+      </header>
 
-        {/* RIGHT: Run details */}
-        <aside className="space-y-4">
-          <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5">
-            <div className="flex items-start justify-between gap-4 mb-3">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-900">
-                  Run Details
-                </h2>
-                <p className="mt-1 text-xs text-slate-600">
-                  Footprint and ingestion snapshot for the active run.
-                  This powers Dashboard, Portfolio, and Analysis views.
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="text-[0.65rem] uppercase tracking-wide text-slate-500">
-                  Coverage grade
-                </p>
-                <p className="text-xs font-semibold text-slate-900">
-                  {coverageLabel}
-                </p>
-                <p className="text-[0.65rem] text-slate-500">
-                  ({completed}/{total} slices provided)
-                </p>
-              </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+        {/* Left: Runs table */}
+        <section className="lg:col-span-2 border rounded-lg bg-white shadow-sm">
+          <div className="px-4 py-3 border-b flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Run Registry</h2>
+            {isLoadingRuns && (
+              <span className="text-xs text-gray-500">Loading runs...</span>
+            )}
+          </div>
+          {runsError && (
+            <div className="px-4 py-2 text-sm text-red-600">{runsError}</div>
+          )}
+          {!isLoadingRuns && runs.length === 0 && !runsError && (
+            <div className="px-4 py-4 text-sm text-gray-500">
+              No runs found yet. Ingest some data to see runs here.
             </div>
-
-            <div className="mb-2 flex items-center justify-between text-xs text-slate-600">
-              <div>
-                <span className="font-medium text-slate-800">
-                  Run ID:
-                </span>{" "}
-                <span className="font-mono text-[0.7rem]">
-                  {trimmedRunId || "—"}
-                </span>
-              </div>
-              <div className="text-right">
-                <p className="text-[0.65rem] uppercase tracking-wide text-slate-500">
-                  Source
-                </p>
-                <p className="text-[0.7rem] text-slate-700">
-                  Dashboard / Runs / CSV ingestion
-                </p>
-              </div>
-            </div>
-
-            {/* Extra navigation to Run Detail / Reports */}
-            {trimmedRunId && (
-              <div className="mb-4 flex flex-wrap gap-2 text-xs">
-                <Link
-                  to={`/runs/${encodeURIComponent(trimmedRunId)}`}
-                  className="inline-flex items-center rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
-                >
-                  Open Run Workspace
-                </Link>
-                <Link
-                  to={`/runs/${encodeURIComponent(trimmedRunId)}`}
-                  className="inline-flex items-center rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                >
-                  Open Reports tab
-                </Link>
-              </div>
-            )}
-
-            {summaryLoading && (
-              <div className="mb-3 text-[0.7rem] text-slate-500">
-                Loading summary...
-              </div>
-            )}
-
-            {summaryError && (
-              <div className="mb-3 rounded-md bg-rose-50 border border-rose-200 px-3 py-2 text-[0.7rem] text-rose-700">
-                {summaryError}
-              </div>
-            )}
-
-            {!summary && !summaryError && trimmedRunId && (
-              <div className="mb-3 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-[0.7rem] text-amber-800">
-                No summary found yet for this run. Ingest data to populate
-                coverage and metrics.
-              </div>
-            )}
-
-            {/* GRID of ingestion tiles */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-              {[
-                {
-                  label: "Servers",
-                  present:
-                    (summary?.servers?.totals?.server_count ?? 0) > 0,
-                  line1: `Count: ${
-                    summary?.servers?.totals?.server_count ?? 0
-                  }`,
-                  line2: "",
-                },
-                {
-                  label: "Storage",
-                  present:
-                    (summary?.storage?.totals?.volume_count ?? 0) > 0,
-                  line1: `Volumes: ${
-                    summary?.storage?.totals?.volume_count ?? 0
-                  }`,
-                  line2: `Total size: ${
-                    summary?.storage?.totals?.total_size_gb ?? 0
-                  } GB`,
-                },
-                {
-                  label: "Network",
-                  present:
-                    (summary?.network?.device_count ?? 0) > 0 ||
-                    (summary?.network?.subnet_count ?? 0) > 0,
-                  line1: `Records: ${
-                    summary?.network?.device_count ?? 0
-                  }`,
-                  line2:
-                    summary?.network?.subnet_count != null
-                      ? `Subnets: ${
-                          summary.network.subnet_count
-                        }`
-                      : "",
-                },
-                {
-                  label: "Databases",
-                  present:
-                    (summary?.databases?.totals?.db_count ?? 0) > 0,
-                  line1: `Count: ${
-                    summary?.databases?.totals?.db_count ?? 0
-                  }`,
-                  line2: `Total size: ${
-                    summary?.databases?.totals?.total_db_size_gb ?? 0
-                  } GB`,
-                },
-                {
-                  label: "Applications",
-                  present:
-                    (summary?.applications?.totals?.app_count ?? 0) >
-                    0,
-                  line1: `Apps: ${
-                    summary?.applications?.totals?.app_count ?? 0
-                  }`,
-                  line2:
-                    summary?.applications?.totals
-                      ?.critical_high_tier_count != null
-                      ? `Critical/High tiers: ${
-                          summary.applications.totals
-                            .critical_high_tier_count
-                        }`
-                      : "",
-                },
-                {
-                  label: "Business metadata",
-                  present:
-                    (summary?.business?.by_sla_tier?.length ?? 0) > 0,
-                  line1: `SLA tiers: ${
-                    summary?.business?.by_sla_tier?.length ?? 0
-                  }`,
-                  line2:
-                    summary?.business?.by_criticality?.length != null
-                      ? `Criticality tiers: ${
-                          summary.business.by_criticality.length
-                        }`
-                      : "",
-                },
-                {
-                  label: "App dependencies",
-                  present:
-                    (summary?.dependencies?.dependency_count ?? 0) > 0,
-                  line1: `Links: ${
-                    summary?.dependencies?.dependency_count ?? 0
-                  }`,
-                  line2: "",
-                },
-                {
-                  label: "OS metadata",
-                  present:
-                    (summary?.os?.by_family?.length ?? 0) > 0,
-                  line1: `Families: ${
-                    summary?.os?.by_family?.length ?? 0
-                  }`,
-                  line2:
-                    summary?.os?.by_name?.length != null
-                      ? `Names: ${summary.os.by_name.length}`
-                      : "",
-                },
-                {
-                  label: "Licensing",
-                  present:
-                    (summary?.licensing?.by_vendor?.length ?? 0) > 0,
-                  line1: `Vendors: ${
-                    summary?.licensing?.by_vendor?.length ?? 0
-                  }`,
-                  line2:
-                    summary?.licensing?.by_product?.length != null
-                      ? `Products: ${
-                          summary.licensing.by_product.length
-                        }`
-                      : "",
-                },
-              ].map((tile) => {
-                const pillClass = tile.present
-                  ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-                  : "bg-amber-50 border-amber-200 text-amber-800";
-                const pillLabel = tile.present ? "Present" : "Missing";
-
-                return (
-                  <div
-                    key={tile.label}
-                    className="border border-slate-200 rounded-lg px-3 py-2.5 bg-slate-50/40"
-                  >
-                    <div className="flex items-center justify-between mb-1.5">
-                      <p className="text-xs font-semibold text-slate-900">
-                        {tile.label}
-                      </p>
-                      <span
-                        className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[0.65rem] font-medium ${pillClass}`}
+          )}
+          {runs.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">Run ID</th>
+                    <th className="px-3 py-2 text-left font-medium">
+                      Created At
+                    </th>
+                    <th className="px-3 py-2 text-left font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.map((run) => {
+                    const isSelected = run.run_id === selectedRunId;
+                    return (
+                      <tr
+                        key={run.run_id}
+                        className={`border-t cursor-pointer ${
+                          isSelected ? "bg-blue-50" : "hover:bg-gray-50"
+                        }`}
+                        onClick={() => handleRunClick(run)}
                       >
-                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-current mr-1" />
-                        {pillLabel}
-                      </span>
-                    </div>
-                    <p className="text-[0.7rem] text-slate-700">
-                      {tile.line1}
-                    </p>
-                    {tile.line2 && (
-                      <p className="text-[0.7rem] text-slate-700">
-                        {tile.line2}
-                      </p>
-                    )}
-                  </div>
-                );
-              })}
+                        <td className="px-3 py-2">{run.run_id}</td>
+                        <td className="px-3 py-2 text-gray-600">
+                          {run.created_at ?? "-"}
+                        </td>
+                        <td className="px-3 py-2 text-gray-600">
+                          {run.status ?? "-"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
 
-              {/* Utilization snapshot */}
-              <div className="border border-slate-200 rounded-lg px-3 py-2.5 bg-slate-50/40 sm:col-span-2">
-                <div className="flex items-center justify-between mb-1.5">
-                  <p className="text-xs font-semibold text-slate-900">
-                    Utilization snapshot
-                  </p>
-                  <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[0.65rem] font-medium text-amber-800">
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-current mr-1" />
-                    {summary?.utilization?.servers_with_metrics
-                      ? "Present"
-                      : "Missing"}
+        {/* Right: Run Details tile with 10 slices */}
+        <section className="border rounded-lg bg-white shadow-sm">
+          <div className="px-4 py-3 border-b">
+            <h2 className="text-lg font-semibold">Run Details</h2>
+          </div>
+          <div className="px-4 py-3 space-y-3 text-sm">
+            {!selectedRunId && (
+              <p className="text-gray-500">
+                Select a run from the left to view details.
+              </p>
+            )}
+
+            {selectedRunId && (
+              <>
+                <div className="flex justify-between">
+                  <span className="font-medium">Coverage grade</span>
+                  <span className="text-gray-800">
+                    {coverageGrade}
+                    {coverageScore !== null && ` (${coverageScore}%)`}
                   </span>
                 </div>
 
-                <p className="text-[0.7rem] text-slate-600 mb-2">
-                  Color-coded averages and peaks, plus a small sparkline
-                  for quick health checks.
-                </p>
+                <div className="flex justify-between">
+                  <span className="font-medium">Run ID</span>
+                  <span className="text-gray-800">{selectedRunId}</span>
+                </div>
 
-                <div className="grid grid-cols-3 gap-3 items-end">
-                  <div>
-                    <p className="text-[0.65rem] text-slate-500">
-                      Avg CPU
-                    </p>
-                    <p
-                      className={`text-sm font-semibold ${getSeverityClass(
-                        summary?.utilization?.avg_cpu_pct,
-                      )}`}
-                    >
-                      {summary?.utilization?.avg_cpu_pct != null
-                        ? `${summary.utilization.avg_cpu_pct.toFixed(
-                            1,
-                          )}%`
-                        : "—"}
-                    </p>
+                <div className="flex justify-between">
+                  <span className="font-medium">Ingestion status</span>
+                  <span className="text-gray-800">{ingestionStatus}</span>
+                </div>
 
-                    <p className="mt-1 text-[0.65rem] text-slate-500">
-                      Peak CPU
-                    </p>
-                    <p
-                      className={`text-sm font-semibold ${getSeverityClass(
-                        summary?.utilization?.peak_cpu_pct,
-                      )}`}
-                    >
-                      {summary?.utilization?.peak_cpu_pct != null
-                        ? `${summary.utilization.peak_cpu_pct.toFixed(
-                            1,
-                          )}%`
-                        : "—"}
-                    </p>
+                {isLoadingSummary && (
+                  <p className="text-xs text-gray-500">
+                    Loading run summary...
+                  </p>
+                )}
+                {summaryError && (
+                  <p className="text-xs text-red-600">{summaryError}</p>
+                )}
+
+                {/* 10 ingestion slices */}
+                <div className="pt-2 border-t mt-2 space-y-1">
+                  <p className="text-xs font-semibold text-gray-500">
+                    Ingestion coverage
+                  </p>
+
+                  {/* Servers (using v2-aware count) */}
+                  <div className="flex justify-between">
+                    <span>Servers</span>
+                    <span className="text-xs text-gray-700">
+                      {serversMissing ? "• Missing" : "• Present"} | Count:{" "}
+                      {effectiveServersCount}
+                    </span>
                   </div>
 
-                  <div>
-                    <p className="text-[0.65rem] text-slate-500">
-                      Avg RAM
-                    </p>
-                    <p
-                      className={`text-sm font-semibold ${getSeverityClass(
-                        summary?.utilization?.avg_ram_pct,
-                      )}`}
-                    >
-                      {summary?.utilization?.avg_ram_pct != null
-                        ? `${summary.utilization.avg_ram_pct.toFixed(
-                            1,
-                          )}%`
-                        : "—"}
-                    </p>
-
-                    <p className="mt-1 text-[0.65rem] text-slate-500">
-                      Peak RAM
-                    </p>
-                    <p
-                      className={`text-sm font-semibold ${getSeverityClass(
-                        summary?.utilization?.peak_ram_pct,
-                      )}`}
-                    >
-                      {summary?.utilization?.peak_ram_pct != null
-                        ? `${summary.utilization.peak_ram_pct.toFixed(
-                            1,
-                          )}%`
-                        : "—"}
-                    </p>
+                  {/* Storage */}
+                  <div className="flex justify-between">
+                    <span>Storage</span>
+                    <span className="text-xs text-gray-700">
+                      {storageMissing ? "• Missing" : "• Present"} | Count:{" "}
+                      {storageCount}
+                    </span>
                   </div>
 
-                  <div className="col-span-1">
-                    <UtilizationSparkline
-                      cpuAvg={summary?.utilization?.avg_cpu_pct}
-                      cpuPeak={summary?.utilization?.peak_cpu_pct}
-                      ramAvg={summary?.utilization?.avg_ram_pct}
-                      ramPeak={summary?.utilization?.peak_ram_pct}
-                    />
+                  {/* Network */}
+                  <div className="flex justify-between">
+                    <span>Network</span>
+                    <span className="text-xs text-gray-700">
+                      {networkMissing ? "• Missing" : "• Present"} | Count:{" "}
+                      {networkCount}
+                    </span>
+                  </div>
+
+                  {/* Databases */}
+                  <div className="flex justify-between">
+                    <span>Databases</span>
+                    <span className="text-xs text-gray-700">
+                      {databasesMissing ? "• Missing" : "• Present"} | Count:{" "}
+                      {databasesCount}
+                    </span>
+                  </div>
+
+                  {/* Applications */}
+                  <div className="flex justify-between">
+                    <span>Applications</span>
+                    <span className="text-xs text-gray-700">
+                      {applicationsMissing ? "• Missing" : "• Present"} | Count:{" "}
+                      {applicationsCount}
+                    </span>
+                  </div>
+
+                  {/* Business metadata */}
+                  <div className="flex justify-between">
+                    <span>Business metadata</span>
+                    <span className="text-xs text-gray-700">
+                      {businessMetadataMissing ? "• Missing" : "• Present"} |
+                      Count: {businessMetadataCount}
+                    </span>
+                  </div>
+
+                  {/* App dependencies */}
+                  <div className="flex justify-between">
+                    <span>App dependencies</span>
+                    <span className="text-xs text-gray-700">
+                      {appDependenciesMissing ? "• Missing" : "• Present"} |
+                      Count: {appDependenciesCount}
+                    </span>
+                  </div>
+
+                  {/* OS metadata */}
+                  <div className="flex justify-between">
+                    <span>OS metadata</span>
+                    <span className="text-xs text-gray-700">
+                      {osMetadataMissing ? "• Missing" : "• Present"} | Count:{" "}
+                      {osMetadataCount}
+                    </span>
+                  </div>
+
+                  {/* Licensing */}
+                  <div className="flex justify-between">
+                    <span>Licensing</span>
+                    <span className="text-xs text-gray-700">
+                      {licensingMissing ? "• Missing" : "• Present"} | Count:{" "}
+                      {licensingCount}
+                    </span>
+                  </div>
+
+                  {/* Utilization snapshot */}
+                  <div className="flex justify-between">
+                    <span>Utilization snapshot</span>
+                    <span className="text-xs text-gray-700">
+                      {utilizationMissing ? "• Missing" : "• Present"} | Count:{" "}
+                      {utilizationCount}
+                    </span>
                   </div>
                 </div>
-              </div>
-            </div>
-          </section>
-        </aside>
+              </>
+            )}
+          </div>
+        </section>
       </div>
+
+      {/* Step 2: Servers (v2) section – fully separate from Run Details tile */}
+      <section className="border rounded-lg bg-white shadow-sm mt-4">
+        <div className="px-4 py-3 border-b flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Servers (v2)</h2>
+          {selectedRunId && serversV2Count !== null && (
+            <span className="text-xs text-gray-600">
+              {serversV2Count} servers ingested via v2 pipeline for run{" "}
+              <span className="font-mono">{selectedRunId}</span>
+            </span>
+          )}
+        </div>
+        <div className="px-4 py-3 text-sm">
+          {!selectedRunId && (
+            <p className="text-gray-500">
+              Select a run above to view v2 server inventory.
+            </p>
+          )}
+
+          {selectedRunId && isLoadingServersV2 && (
+            <p className="text-gray-500">Loading v2 servers...</p>
+          )}
+
+          {selectedRunId && serversV2Error && (
+            <p className="text-red-600">{serversV2Error}</p>
+          )}
+
+          {selectedRunId &&
+            !isLoadingServersV2 &&
+            serversV2 &&
+            serversV2.length === 0 &&
+            !serversV2Error && (
+              <p className="text-gray-500">
+                No v2 servers found for this run. This run may be using the
+                legacy ingestion path or has not ingested server data yet.
+              </p>
+            )}
+
+          {selectedRunId &&
+            !isLoadingServersV2 &&
+            serversV2 &&
+            serversV2.length > 0 && (
+              <div className="overflow-x-auto border rounded-md">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium">
+                        Hostname
+                      </th>
+                      <th className="px-3 py-2 text-left font-medium">OS</th>
+                      <th className="px-3 py-2 text-left font-medium">
+                        Environment
+                      </th>
+                      <th className="px-3 py-2 text-left font-medium">vCPUs</th>
+                      <th className="px-3 py-2 text-left font-medium">
+                        Memory (GB)
+                      </th>
+                      <th className="px-3 py-2 text-left font-medium">
+                        Storage (GB)
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {serversV2.map((s) => (
+                      <tr key={s.hostname} className="border-t">
+                        <td className="px-3 py-2">{s.hostname}</td>
+                        <td className="px-3 py-2">{s.os ?? "-"}</td>
+                        <td className="px-3 py-2">
+                          {s.environment ?? "-"}
+                        </td>
+                        <td className="px-3 py-2">{s.vcpus ?? "-"}</td>
+                        <td className="px-3 py-2">{s.memory_gb ?? "-"}</td>
+                        <td className="px-3 py-2">{s.storage_gb ?? "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+        </div>
+      </section>
     </div>
   );
 };
