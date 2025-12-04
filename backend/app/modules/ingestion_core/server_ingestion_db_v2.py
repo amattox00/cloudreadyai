@@ -1,79 +1,87 @@
-"""
-app/modules/ingestion_core/server_ingestion_db_v2.py
+# app/modules/ingestion_core/server_ingestion_db_v2.py
 
-DB helper functions for writing server ingestion results
-into the *v2* tables:
-
-  - ingestion_runs_v2
-  - inventory_server_v2
-
-This keeps us completely separate from the legacy `servers` /
-`ingestion_runs` schema.
-"""
-
-from __future__ import annotations
-
-from typing import Optional
-from uuid import uuid4
+from typing import Callable
 
 from sqlalchemy.orm import Session
 
-from app.modules.ingestion_core.server_ingestion_core import ServerRow
 from app.models.ingestion_run_v2 import IngestionRunV2
 from app.models.inventory_server_v2 import InventoryServerV2
+from app.modules.ingestion_core.server_ingestion_core import (
+    ingest_servers_from_csv,
+    ServersIngestionSummary,
+    ServerRow,
+)
 
 
 def ensure_run_v2(db: Session, run_id: str) -> IngestionRunV2:
     """
-    Make sure there's a row in ingestion_runs_v2 for this run_id.
-
-    We keep this as minimal as possible so we don't fight unknown
-    columns on the model. If the model has a `status` field, we'll set it.
+    Make sure there is an ingestion_runs_v2 row for this run_id.
+    If it doesn't exist, create one with a basic status.
     """
     run = (
         db.query(IngestionRunV2)
         .filter(IngestionRunV2.run_id == run_id)
         .one_or_none()
     )
-    if run is not None:
-        return run
-
-    # Minimal constructor: only pass run_id (which we know exists)
-    run = IngestionRunV2(run_id=run_id)
-
-    # If the model happens to have a 'status' column, set a default
-    if hasattr(run, "status"):
-        setattr(run, "status", "NEW")
-
-    db.add(run)
-    db.flush()
+    if run is None:
+        run = IngestionRunV2(
+            run_id=run_id,
+            status="created",
+        )
+        db.add(run)
+        db.commit()
+        db.refresh(run)
     return run
 
 
-def persist_server_row_v2(
-    db: Session,
-    row: ServerRow,
-    run_id: str,
-) -> InventoryServerV2:
+def persist_server_row_v2(row: ServerRow, db: Session, run_id: str) -> None:
     """
-    Persist a single validated ServerRow into inventory_servers_v2.
-
-    We map only fields that actually exist on InventoryServerV2.
-    Later we can derive cpu_usage/ram_usage/storage_usage from
-    performance data instead of raw cores/GB.
+    Map a validated ServerRow into inventory_servers_v2.
+    Right now we only populate the basic fields; we can extend later.
     """
-
-    # Optional role if your ServerRow has it; otherwise this will be None
-    role_value = getattr(row, "role", None)
-
     server = InventoryServerV2(
         run_id=run_id,
         hostname=row.hostname,
-        role=role_value,
+        role=None,
         os=row.os,
         environment=row.environment,
-        # cpu_usage, ram_usage, storage_usage left as NULL for now
+        cpu_usage=None,
+        ram_usage=None,
+        storage_usage=None,
+    )
+    db.add(server)
+
+
+def ingest_servers_v2_from_csv_to_db(
+    csv_path: str,
+    db: Session,
+    run_id: str,
+) -> ServersIngestionSummary:
+    """
+    High-level helper used by both:
+      - CLI tool (test_server_ingestion_db_v2.py)
+      - FastAPI route /v2/ingestion/servers/csv
+
+    It:
+      1) Ensures an ingestion_runs_v2 row exists for run_id
+      2) Uses ingest_servers_from_csv(csv_path=..., persist_row=...)
+      3) Commits once after all rows are processed
+      4) Returns ServersIngestionSummary
+    """
+    # 1) Make sure the run exists in ingestion_runs_v2
+    ensure_run_v2(db, run_id)
+
+    # 2) Wrap the per-row DB insert
+    def _persist(row: ServerRow) -> None:
+        persist_server_row_v2(row=row, db=db, run_id=run_id)
+
+    # 3) Call the core ingestion using the *path* to the CSV
+    summary: ServersIngestionSummary = ingest_servers_from_csv(
+        csv_path=csv_path,   # <-- IMPORTANT: csv_path, NOT csv_source
+        persist_row=_persist,
     )
 
-    db.add(server)
-    return server
+    # 4) Single commit after ingestion
+    db.commit()
+
+    return summary

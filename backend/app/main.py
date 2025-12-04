@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Import your routers here
+from app.routers import ingestion_servers_v2
 from app.routers import runs
 from app.routers import reports
 from app.routers import ingest
@@ -34,5 +35,6 @@ app.include_router(diagrams.router)
 app.include_router(cost.router)
 app.include_router(run_registry.router)
 app.include_router(tco.router)
+app.include_router(ingestion_servers_v2.router)
 app.include_router(reports.router)
 app.include_router(run_summary_v2.router)  # ✅ NEW: exposes /v1/runs/{run_id}/summary/v2
