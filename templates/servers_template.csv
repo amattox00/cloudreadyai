@@ -1,0 +1,1 @@
+hostname,environment,os,platform,vm_id,ip_address,subnet,datacenter,cluster_name,role,app_name,owner,criticality,cpu_cores,memory_gb,storage_gb,is_virtual,is_cloud,tags
