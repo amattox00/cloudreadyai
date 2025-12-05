@@ -1,0 +1,6 @@
+business_service,app_name,environment,business_unit,business_owner,executive_owner,criticality,rto_hours,rpo_hours,revenue_impact_per_hour,customer_impact,compliance_tags,notes,tags
+Order Management,OrderProcessing,prod,Operations,John Doe,VP Operations,critical,1,1,250000,external,"PCI;SOX","Core revenue engine","env:prod;bu:operations"
+Reporting & Analytics,ReportingService,dev,Finance,Jane Smith,CFO,medium,8,24,5000,internal,"SOX","Dev reporting environment","env:dev;bu:finance"
+Customer Login,LoginService,stage,Security,App Team,CISO,high,2,4,75000,external,"PCI","Staging for login service","env:stage;bu:security"
+Inventory Operations,InventoryMgmt,prod,Operations,Ops Team,VP Supply Chain,high,4,8,50000,internal,"SOX","Manages inventory flows","env:prod;bu:operations"
+Analytics Platform,AnalyticsEngine,qa,Analytics,Data Team,CDO,medium,8,24,15000,internal,"GDPR","QA analytics workloads","env:qa;bu:analytics"

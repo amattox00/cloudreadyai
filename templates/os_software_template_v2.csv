@@ -1,0 +1,6 @@
+hostname,environment,os_name,os_version,os_release,kernel_version,patch_level,middleware_stack,java_version,dotnet_version,web_server,db_client,installed_software,notes,tags
+app01,prod,Windows Server,2019,1809,,2024-10, IIS; .NET, ,v4.8,IIS,SQLClient,"CrowdStrike; SolarWinds; AppInsights","Primary app server","env:prod;role:app"
+db01,prod,RHEL,8.9,Final,4.18.0-513.5.1.el8_9,2024-09,httpd; PHP-FPM, , ,Apache,http-odbc,"OracleClient; TSM Agent","Main database host","env:prod;role:db"
+web01,dev,Ubuntu,22.04,LTS,5.15.0-107-generic,2024-08,nginx,OpenJDK 17, ,Nginx,psql,"NodeJS; PM2; Telegraf","Dev frontend","env:dev;role:web"
+batch01,stage,SLES,15 SP5,GA,5.14.21-150500.55.52-default,2024-07,Tomcat 9,OpenJDK 11, ,Jetty,mysql,"Ansible; Python 3.11","Batch job runner","env:stage;role:batch"
+legacy01,prod,Windows Server,2012 R2,9600,,2019-12,.NET 4.5, ,v4.5,IIS,OracleClient,"Old Antivirus; CustomAgent","Legacy app awaiting migration","env:prod;role:legacy"

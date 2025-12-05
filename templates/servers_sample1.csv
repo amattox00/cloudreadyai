@@ -1,0 +1,4 @@
+hostname,os,environment,vcpus,memory_gb,storage_gb
+app01,Windows,prod,4,16,200
+db01,RHEL,prod,8,32,500
+web01,Ubuntu,dev,2,8,100

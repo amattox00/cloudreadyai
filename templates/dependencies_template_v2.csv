@@ -1,0 +1,7 @@
+app_name,environment,dependency_type,server_hostname,database_name,database_engine,notes,tags
+OrderProcessing,prod,server,app01,,,App talks to app01,env:prod;type:server
+OrderProcessing,prod,database,,orders_prod,Oracle,App uses primary orders DB,env:prod;type:database
+ReportingService,dev,server,reporting-app-01,,,Dev reporting service node,env:dev;type:server
+ReportingService,dev,database,,reporting_dev,SQLServer,Dev reporting DB,env:dev;type:database
+AnalyticsEngine,qa,server,analytics-app-01,,,Analytics app server,env:qa;type:server
+AnalyticsEngine,qa,database,,analytics_warehouse,Postgres,Analytics warehouse,env:qa;type:database

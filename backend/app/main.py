@@ -10,8 +10,16 @@ from app.routers import diagrams
 from app.routers import cost
 from app.routers import run_registry
 from app.routers import tco
+from app.routers import ingestion_storage_v2
 from app.routers import run_summary_v2  # ✅ NEW: Phase C summary router
-
+from app.routers import ingestion_databases_v2
+from app.routers import ingestion_applications_v2
+from app.routers import ingestion_dependencies_v2
+from app.routers import ingestion_networks_v2
+from app.routers import ingestion_os_software_v2
+from app.routers import ingestion_business_v2
+from app.routers import ingestion_utilization_v2
+from app.routers import ingestion_licenses_v2
 
 app = FastAPI(
     title="CloudReadyAI API",
@@ -38,3 +46,12 @@ app.include_router(tco.router)
 app.include_router(ingestion_servers_v2.router)
 app.include_router(reports.router)
 app.include_router(run_summary_v2.router)  # ✅ NEW: exposes /v1/runs/{run_id}/summary/v2
+app.include_router(ingestion_storage_v2.router)
+app.include_router(ingestion_databases_v2.router)
+app.include_router(ingestion_applications_v2.router)
+app.include_router(ingestion_dependencies_v2.router)
+app.include_router(ingestion_networks_v2.router)
+app.include_router(ingestion_os_software_v2.router)
+app.include_router(ingestion_business_v2.router)
+app.include_router(ingestion_utilization_v2.router, tags=["ingestion_v2"])
+app.include_router(ingestion_licenses_v2.router)

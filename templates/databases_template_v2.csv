@@ -1,0 +1,6 @@
+hostname,db_name,db_engine,engine_version,environment,platform,cluster_name,port,db_role,ha_enabled,criticality,owner,cpu_cores,memory_gb,storage_gb,allocated_storage_gb,used_storage_gb,is_cloud,cloud_provider,region,tags
+db01,orders_prod,Oracle,19c,prod,vmware,DBCluster1,1521,primary,true,critical,app_team_1,8,64,2000,2000,1500,false,,,"env:prod;engine:oracle;ha:true"
+db02,orders_dr,Oracle,19c,dr,vmware,DBCluster1,1521,standby,true,critical,app_team_1,8,64,2000,2000,1000,false,,,"env:dr;engine:oracle;ha:true"
+rds-mysql-01,customers_prod,MySQL,8.0,prod,aws_rds,RDSClusterA,3306,primary,true,high,app_team_2,4,32,500,500,300,true,aws,us-east-1,"env:prod;engine:mysql;rds:true"
+sqlsrv-01,reporting_dev,SQLServer,2019,dev,vmware,DBCluster2,1433,primary,false,medium,bi_team,4,16,1000,1000,200,false,,,"env:dev;engine:sqlserver;ha:false"
+postgres-01,logs_stage,Postgres,14,stage,vmware,DBCluster3,5432,primary,false,low,ops_team,2,8,500,500,100,false,,,"env:stage;engine:postgres"

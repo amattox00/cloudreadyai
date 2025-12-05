@@ -1,0 +1,6 @@
+subnet_id,subnet_cidr,vlan_id,environment,datacenter,zone,network_name,purpose,is_public,is_dmz,connected_to,tags
+subnet-app-prod-01,10.10.1.0/24,101,prod,DC1,az1,AppSubnet01,app-tier,false,false,core-router-01;fw-01,env:prod;tier:app
+subnet-web-prod-01,10.10.2.0/24,102,prod,DC1,az1,WebSubnet01,web-tier,true,true,edge-lb-01;fw-01,env:prod;tier:web;zone:dmz
+subnet-db-prod-01,10.10.3.0/24,103,prod,DC1,az1,DBSubnet01,db-tier,false,false,app-subnet;backup-net,env:prod;tier:db
+subnet-app-dev-01,10.20.1.0/24,201,dev,DC2,az2,AppSubnetDev,app-tier,false,false,core-router-02,env:dev;tier:app
+subnet-web-dev-01,10.20.2.0/24,202,dev,DC2,az2,WebSubnetDev,web-tier,true,true,edge-lb-02;fw-02,env:dev;tier:web;zone:dmz

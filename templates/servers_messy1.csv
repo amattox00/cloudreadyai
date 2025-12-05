@@ -1,0 +1,22 @@
+hostname,environment,os,platform,vm_id,ip_address,subnet,datacenter,cluster_name,role,app_name,owner,criticality,cpu_cores,memory_gb,storage_gb,is_virtual,is_cloud,tags
+app01,prod,Windows,vmware,vm-1001,10.0.0.10,10.0.0.0/24,DC1,ClusterA,app,Claims Portal,alice,high,4,16,200,true,false,web;tier1
+db01,prod,RHEL,vmware,vm-1002,10.0.0.11,10.0.0.0/24,DC1,ClusterA,db,Claims DB,bob,critical,8,64,500,true,false,db;oracle
+web01,dev,Ubuntu,vmware,vm-1003,10.0.1.10,10.0.1.0/24,DC2,ClusterB,web,Marketing Site,charlie,medium,2,8,100,true,false,web;public
+
+# bad_cpu_not_int
+app02,qa,Windows,vmware,vm-1004,10.0.2.10,10.0.2.0/24,DC1,ClusterA,app,Legacy App,dana,medium,not_a_number,8,100,true,false,legacy
+
+# missing_memory
+db02,prod,RHEL,vmware,vm-1005,10.0.2.11,10.0.2.0/24,DC1,ClusterA,db,Analytics DB,edgar,high,4,,500,true,false,analytics
+
+# bad_storage_not_int
+batch01,prod,RHEL,vmware,vm-1006,10.0.3.5,10.0.3.0/24,DC3,ClusterC,batch,Batch Engine,frank,high,4,16,not_a_number,true,false,batch
+
+# invalid_boolean_flags
+web02,prod,Ubuntu,vmware,vm-1007,10.0.4.10,10.0.4.0/24,DC2,ClusterB,web,Portal 2,george,low,2,4,50,yes,no,web;frontend
+
+# minimal_fields_but_valid_types
+file01,prod,Windows,vmware,vm-1008,10.0.5.20,10.0.5.0/24,DC1,ClusterA,file,File Server,harriet,medium,4,32,200,true,false,file;fileshare
+
+# duplicate_hostname
+app01,stage,Windows,vmware,vm-2001,10.0.6.10,10.0.6.0/24,DC1,ClusterA,app,Claims Portal Stage,alice,medium,4,8,150,true,false,duplicate-hostname

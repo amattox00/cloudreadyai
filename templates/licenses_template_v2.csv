@@ -1,0 +1,6 @@
+hostname,product_name,vendor,license_type,metric,environment,cores_licensed,users_licensed,expiry_date,cost_per_year,maintenance_per_year,po_number,owner,notes,tags
+app01,Windows Server 2022,Microsoft,OS,per-core,prod,16,,2026-12-31,1200,300,PO-1001,Infra Team,Core OS license for app01,"os:windows;env:prod"
+db01,SQL Server Enterprise,Microsoft,DB,per-core,prod,8,,2026-06-30,8000,2000,PO-1002,DBA Team,SQL license for db01,"db:sqlserver;env:prod"
+web01,Red Hat Enterprise Linux,Red Hat,OS,per-host,dev,,10,2025-10-01,1500,400,PO-1003,DevOps,Dev RHEL subscription,"os:rhel;env:dev"
+batch01,Informatica PowerCenter,Informatica,App,per-user,stage,,25,2027-03-31,20000,5000,PO-1004,ETL Team,ETL tool licensing,"app:etl;env:stage"
+file01,NetBackup,Veritas,Backup,per-host,prod,,5,2026-01-15,5000,1500,PO-1005,Backup Team,Backup software licensing,"backup:netbackup;env:prod"

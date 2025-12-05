@@ -1,0 +1,6 @@
+app_name,owner,business_unit,environment,description,tier,sla_hours,criticality,depends_on_servers,depends_on_databases,tags
+OrderProcessing,John Doe,Operations,prod,Handles all orders,Tier1,99.9,critical,"app01;app02","orders_prod;reporting_prod","type:core;team:ops"
+ReportingService,Jane Smith,Finance,dev,Generates financial reports,Tier2,99.0,high,"report01","reporting_dev","type:reporting;team:finance"
+LoginService,App Team,Security,stage,User authentication service,Tier1,99.9,critical,"auth01;auth02",,"type:auth;team:security"
+InventoryMgmt,Ops Team,Operations,prod,Inventory tracking,Tier2,99.5,medium,"inv01","inventory_prod","type:inventory;team:ops"
+AnalyticsEngine,Data Team,Analytics,qa,Data analytics pipeline,Tier3,95.0,low,"etl01;etl02","analytics_stage","type:analytics;team:data"

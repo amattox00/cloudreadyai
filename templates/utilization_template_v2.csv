@@ -1,0 +1,6 @@
+hostname,environment,metric_window,avg_cpu_percent,peak_cpu_percent,avg_ram_percent,peak_ram_percent,avg_disk_percent,peak_disk_percent,avg_net_mbps,peak_net_mbps,sample_count,tags
+app01,prod,30d,35,82,40,78,50,90,10,50,720,role:app;env:prod
+db01,prod,30d,55,92,70,95,65,98,15,80,720,role:db;env:prod
+web01,dev,30d,15,40,20,45,25,50,5,20,720,role:web;env:dev
+batch01,stage,30d,45,88,50,90,55,95,8,40,720,role:batch;env:stage
+file01,prod,30d,10,25,15,30,60,85,2,10,720,role:file;env:prod

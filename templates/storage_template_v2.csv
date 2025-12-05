@@ -1,0 +1,4 @@
+volume_id,hostname,environment,datastore,storage_array,protocol,tier,raid_type,capacity_gb,used_gb,provisioned_gb,iops,latency_ms,storage_type,is_replicated,notes
+vol-0001,app01,prod,DS1,ArrayA,FC,Gold,RAID10,500,250,600,5000,1.2,block,true,Primary app datastore
+vol-0002,db01,prod,DS2,ArrayB,iSCSI,Platinum,RAID10,2000,1500,2500,8000,2.1,block,true,DB storage
+vol-0003,web01,dev,DS3,ArrayC,NFS,Silver,RAID5,1000,300,1200,2000,3.5,file,false,Web content
