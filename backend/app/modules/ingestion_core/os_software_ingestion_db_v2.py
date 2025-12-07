@@ -5,7 +5,7 @@ from typing import Iterable
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
-from app.models.inventory_os_software_v2 import InventoryOSSoftwareV2
+from app.models.inventory_os_software_v2 import InventoryOsSoftwareV2
 from app.modules.ingestion_core.os_software_ingestion_v2 import OSSoftwareRow
 
 

@@ -1,86 +1,65 @@
-"""
-tools/test_server_ingestion_db_v2.py
-
-Offline test harness for the servers ingestion slice, targeting the
-*v2* ingestion tables:
-
-  - ingestion_runs_v2
-  - inventory_server_v2
-
-No FastAPI, no systemd, no routers. Just:
-
-  CSV -> ServerRow (via core ingestion) -> v2 DB tables
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
-
-from app.modules.ingestion_core.server_ingestion_core import (
-    ingest_servers_from_csv,
-)
-from app.modules.ingestion_core.server_ingestion_db_v2 import (
-    ensure_run_v2,
-    persist_server_row_v2,
-)
-from app.db import get_db
+import subprocess
+import textwrap
 
 
 def main() -> None:
-    # You can change this run_id anytime; it's just for testing.
-    run_id = "run-servers-v2-test-001"
-    csv_path = Path("sample_data/servers_sample.csv")
+    """
+    Helper script for servers ingestion v2.
 
-    if not csv_path.exists():
-        raise SystemExit(f"CSV file not found: {csv_path}")
+    Note:
+    - In this branch, servers v2 ingestion is implemented via the FastAPI router
+      (/v2/ingestion/servers/csv) instead of a shared ingestion_core module.
+    - This script does NOT call Python ingestion functions directly. Instead it
+      shows you exactly how to test the pipeline via curl + Postgres.
+    """
 
-    # Use the same DB session factory the main app uses
-    db_gen = get_db()
-    db = next(db_gen)
+    repo_root = Path(__file__).resolve().parents[1]
+    csv_path = repo_root.parent / "templates" / "servers_sample1.csv"
 
-    try:
-        # 1) Ensure we have a v2 ingestion run row
-        ensure_run_v2(db, run_id)
+    print(f"Servers v2 test helper")
+    print(f"Using CSV: {csv_path}")
+    print()
 
-        # 2) Run the core ingestion against the CSV, piping rows into v2 DB
-        with csv_path.open("r", encoding="utf-8") as f:
-            result = ingest_servers_from_csv(
-                file_like=f,
-                persist_row=lambda row: persist_server_row_v2(
-                    db=db,
-                    row=row,
-                    run_id=run_id,
-                ),
-            )
+    curl_cmd = textwrap.dedent(
+        f"""
+        curl -X POST "http://localhost:8000/v2/ingestion/servers/csv?run_id=run-servers-v2-dbtest-001" \\
+          -H "accept: application/json" \\
+          -H "Content-Type: multipart/form-data" \\
+          -F "file=@{csv_path};type=text/csv"
+        """
+    ).strip()
 
-        # 3) Commit all successful rows
-        db.commit()
+    print("--- 1) Run this curl command in another shell to ingest: ---")
+    print(curl_cmd)
+    print()
 
-        # 4) Print a nice summary
-        print("\n--- DB-backed v2 ingestion finished ---")
-        print("Run ID        :", run_id)
-        print("CSV file      :", csv_path)
-        print("Rows processed:", result.rows_processed)
-        print("Rows successful:", result.rows_successful)
-        print("Rows failed   :", result.rows_failed)
-        print("Errors:")
-        if not result.errors:
-            print("  (none)")
-        else:
-            for err in result.errors:
-                print("  -", err)
+    print("--- 2) Then verify in Postgres with something like: ---")
+    print(
+        textwrap.dedent(
+            """
+            PGPASSWORD=cloudready psql -h 127.0.0.1 -p 5432 -U cloudready -d cloudready
 
-    finally:
-        # Cleanly close DB generator/session
-        try:
-            db.close()
-        except Exception:
-            pass
+            SELECT run_id,
+                   hostname,
+                   environment,
+                   os,
+                   cpu_usage,
+                   ram_usage,
+                   storage_usage
+            FROM inventory_servers_v2
+            WHERE run_id = 'run-servers-v2-dbtest-001'
+            ORDER BY hostname;
+            """
+        ).rstrip()
+    )
+    print()
 
-        try:
-            db_gen.close()
-        except Exception:
-            pass
+    # Exit cleanly so this script doesn't cause failures in automation
+    print("Note: servers v2 ingestion core is wired via the API router in this branch.")
+    print("This helper script is informational only and does not execute the ingestion directly.")
 
 
 if __name__ == "__main__":

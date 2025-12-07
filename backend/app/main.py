@@ -20,6 +20,8 @@ from app.routers import ingestion_os_software_v2
 from app.routers import ingestion_business_v2
 from app.routers import ingestion_utilization_v2
 from app.routers import ingestion_licenses_v2
+from app.routers import run_rollup_v2
+from app.routers import analysis_v2
 
 app = FastAPI(
     title="CloudReadyAI API",
@@ -55,3 +57,5 @@ app.include_router(ingestion_os_software_v2.router)
 app.include_router(ingestion_business_v2.router)
 app.include_router(ingestion_utilization_v2.router, tags=["ingestion_v2"])
 app.include_router(ingestion_licenses_v2.router)
+app.include_router(run_rollup_v2.router)
+app.include_router(analysis_v2.router)

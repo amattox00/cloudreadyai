@@ -1,63 +1,46 @@
 """
-Bootstraps extra tables that are not yet managed by Alembic migrations.
+Create extra tables that are not covered by the main Alembic migrations yet.
 
-Currently:
-  - ingestion_runs_v2
-  - inventory_servers_v2
-
-This module is imported for its side effects from routers, so that the
-tables are created automatically on startup if they do not already exist.
+We use this as a bridge for the v2 ingestion pipeline while the schema
+is still evolving. It is safe to run multiple times.
 """
 
-from app.db import Base, get_db
-from app.models.ingestion_run_v2 import IngestionRunV2
-from app.models.inventory_server_v2 import InventoryServerV2
-from app.models.inventory_storage_v2 import InventoryStorageV2
-from app.models.inventory_database_v2 import InventoryDatabaseV2
-from app.models.inventory_application_v2 import InventoryApplicationV2
-from app.models.inventory_dependency_v2 import InventoryDependencyV2
-from app.models.inventory_network_v2 import InventoryNetworkV2
-from app.models.inventory_os_software_v2 import InventoryOSSoftwareV2
-from app.models.inventory_business_v2 import InventoryBusinessV2
-from app.models.inventory_utilization_v2 import InventoryUtilizationV2
-from app.models.inventory_license_v2 import InventoryLicenseV2
+import os
 
-def _get_engine():
-    """
-    Obtain the SQLAlchemy engine indirectly via a DB session.
+from sqlalchemy import create_engine
 
-    We don't import `engine` directly from app.db to avoid issues if the
-    symbol isn't exported there.
-    """
-    db_gen = get_db()
-    db = next(db_gen)
-    try:
-        return db.get_bind()
-    finally:
-        try:
-            db_gen.close()  # close generator if possible
-        except Exception:
-            db.close()
+from app.db import Base
 
-
-_engine = _get_engine()
-
-# Create only the new v2 tables; this will not touch other tables.
-Base.metadata.create_all(
-    bind=_engine,
-    tables=[
-        IngestionRunV2.__table__,
-        InventoryServerV2.__table__,
-        InventoryStorageV2.__table__,
-        InventoryDatabaseV2.__table__,
-        InventoryApplicationV2.__table__,
-        InventoryDependencyV2.__table__,
-        InventoryNetworkV2.__table__,
-        InventoryOSSoftwareV2.__table__,
-        InventoryBusinessV2.__table__,
-        InventoryUtilizationV2.__table__,
-        InventoryLicenseV2.__table__,
-
-
-    ],
+# Build our own sync engine here so we don't depend on app.db exporting one.
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql+psycopg://cloudready:cloudready@127.0.0.1:5432/cloudready",
 )
+
+engine = create_engine(DATABASE_URL, future=True)
+
+# Import model modules so SQLAlchemy registers all mapped classes
+# (We don't need the class names here; importing the modules is enough.)
+from app.models import (  # noqa: F401
+    inventory_server_v2,
+    inventory_storage_v2,
+    inventory_database_v2,
+    inventory_application_v2,
+    inventory_dependency_v2,
+    inventory_network_v2,
+    inventory_os_software_v2,
+    inventory_business_v2,
+    inventory_utilization_v2,
+    inventory_license_v2,
+    ingestion_run_v2,
+)
+
+
+def main() -> None:
+    print("Creating extra tables for v2 ingestion pipeline...")
+    Base.metadata.create_all(bind=engine)
+    print("Done creating extra tables.")
+
+
+if __name__ == "__main__":
+    main()
