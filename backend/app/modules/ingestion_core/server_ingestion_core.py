@@ -6,6 +6,10 @@ from typing import Callable, List, Optional
 
 from pydantic import BaseModel, ValidationError, field_validator
 
+from app.modules.ingestion.normalization.servers_normalizer import (
+    normalize_server_record,
+)
+
 
 class ServerRow(BaseModel):
     """
@@ -16,6 +20,7 @@ class ServerRow(BaseModel):
     hostname: str
     environment: Optional[str] = None
     os: Optional[str] = None
+    role: Optional[str] = None
     cpu_cores: Optional[int] = None
     memory_gb: Optional[float] = None
 
@@ -27,7 +32,7 @@ class ServerRow(BaseModel):
             raise ValueError("hostname is required")
         return v
 
-    @field_validator("environment", "os", mode="before")
+    @field_validator("environment", "os", "role", mode="before")
     @classmethod
     def normalize_optional_str(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
@@ -79,15 +84,47 @@ def ingest_servers_from_csv(
             try:
                 # Defensive parsing: missing / empty values become None
                 cpu_raw = (raw.get("cpu_cores") or "").strip()
-                mem_raw = (raw.get("memory_gb") or "").strip()
+                # allow either memory_gb or ram_gb in the CSV
+                mem_raw = (raw.get("memory_gb") or raw.get("ram_gb") or "").strip()
 
+                # First pass: basic CSV → typed ServerRow
                 row = ServerRow(
                     hostname=(raw.get("hostname") or "").strip(),
                     environment=(raw.get("environment") or "").strip() or None,
                     os=(raw.get("os") or "").strip() or None,
+                    role=(raw.get("role") or "").strip() or None,
                     cpu_cores=int(cpu_raw) if cpu_raw else None,
                     memory_gb=float(mem_raw) if mem_raw else None,
                 )
+
+                # Second pass: use shared normalizer for env/OS/role consistency.
+                # Convert the typed row → dict, normalize, then rebuild ServerRow.
+                raw_record = row.model_dump()
+
+                normalized_record, warnings = normalize_server_record(raw_record)
+
+                # Prefer normalized environment if provided; otherwise keep original
+                normalized_env = normalized_record.get("environment") or row.environment
+
+                # Prefer canonical OS name if provided; otherwise keep original
+                normalized_os = (
+                    normalized_record.get("os_name")
+                    or normalized_record.get("os")
+                    or row.os
+                )
+
+                # Prefer normalized role if provided; otherwise keep original
+                normalized_role = normalized_record.get("role") or row.role
+
+                row = ServerRow(
+                    hostname=row.hostname,
+                    environment=normalized_env,
+                    os=normalized_os,
+                    role=normalized_role,
+                    cpu_cores=row.cpu_cores,
+                    memory_gb=row.memory_gb,
+                )
+
             except (ValidationError, ValueError) as e:
                 summary.rows_failed += 1
                 summary.errors.append(
@@ -100,6 +137,7 @@ def ingest_servers_from_csv(
                 f"Ingesting server: {row.hostname} "
                 f"(env={row.environment or '-'}, "
                 f"os={row.os or '-'}, "
+                f"role={row.role or '-'}, "
                 f"cpu={row.cpu_cores or '-'}, "
                 f"mem={row.memory_gb or '-'} GB)"
             )
