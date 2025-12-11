@@ -31,7 +31,7 @@ export default function Sidebar() {
             }`
           }
         >
-          Clients &amp; Portfolios
+          Portfolio
         </NavLink>
 
         <NavLink
@@ -42,7 +42,7 @@ export default function Sidebar() {
             }`
           }
         >
-          Assessments
+          Runs
         </NavLink>
 
         <NavLink
@@ -56,7 +56,7 @@ export default function Sidebar() {
           Diagrams
         </NavLink>
 
-        {/* === MENU ITEMS === */}
+        {/* === NEW MENU ITEMS === */}
 
         <NavLink
           to="/analysis"
@@ -66,7 +66,7 @@ export default function Sidebar() {
             }`
           }
         >
-          Insights
+          Analysis
         </NavLink>
 
         <NavLink
@@ -77,10 +77,10 @@ export default function Sidebar() {
             }`
           }
         >
-          Cost Modeling
+          Cost & TCO
         </NavLink>
 
-        {/* ⭐ RECOMMENDATIONS / STRATEGY LINK ⭐ */}
+        {/* ⭐ NEW: RECOMMENDATIONS LINK ⭐ */}
         <NavLink
           to="/recommendations"
           className={({ isActive }) =>
@@ -89,7 +89,7 @@ export default function Sidebar() {
             }`
           }
         >
-          Migration Strategy
+          Recommendations
         </NavLink>
 
         {/* Settings */}
