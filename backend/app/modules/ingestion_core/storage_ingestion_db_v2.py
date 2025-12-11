@@ -20,14 +20,19 @@ def persist_storage_records_v2(
     """
     Read a storage CSV file and persist rows into inventory_storage_v2.
 
-    This mirrors the servers_v2 pattern:
+    Pattern:
       * Parse + normalize CSV rows via ingest_storage_from_csv(...)
       * For each valid StorageRow, insert into inventory_storage_v2
       * Commit once at the end
+
+    NOTE:
+      We intentionally do NOT insert utilization_pct yet because the column
+      does not exist in the current inventory_storage_v2 schema.
     """
 
     def persist_row(row: StorageRow) -> None:
         # Compute a simple utilization percentage if we have capacity + used.
+        # (Not written to DB yet; kept here for future schema extension.)
         utilization_pct: Optional[float] = None
         if row.capacity_gb and row.used_gb is not None and row.capacity_gb > 0:
             utilization_pct = (row.used_gb / row.capacity_gb) * 100.0
@@ -42,8 +47,7 @@ def persist_storage_records_v2(
                     storage_type,
                     capacity_gb,
                     used_gb,
-                    environment,
-                    utilization_pct
+                    environment
                 )
             VALUES
                 (
@@ -53,8 +57,7 @@ def persist_storage_records_v2(
                     :storage_type,
                     :capacity_gb,
                     :used_gb,
-                    :environment,
-                    :utilization_pct
+                    :environment
                 )
             """
         )
@@ -69,7 +72,6 @@ def persist_storage_records_v2(
                 "capacity_gb": row.capacity_gb,
                 "used_gb": row.used_gb,
                 "environment": row.environment,
-                "utilization_pct": utilization_pct,
             },
         )
 
