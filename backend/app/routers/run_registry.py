@@ -58,14 +58,15 @@ def create_run_registry_entry(db: Session = Depends(get_db)) -> RunSchema:
     """
     POST /v1/run_registry
     Create a new assessment run and return its metadata.
+
+    NOTE: No request body is required. The backend generates run_id and name.
     """
-    # Generate a run_id like: RUN-20251128-193355-abcdef12
+    # Generate a run_id like: RUN-20251211-173055-abcdef12
     run_id_suffix = uuid.uuid4().hex[:8]
     run_id = f"RUN-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}-{run_id_suffix}"
 
     now = datetime.utcnow()
 
-    # IMPORTANT: only pass fields that definitely exist on IngestionRunV2.
     new_run = IngestionRunV2(
         run_id=run_id,
         name=f"Assessment {run_id}",

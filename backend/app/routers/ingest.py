@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -24,295 +22,244 @@ from app.modules.ingestion_engine import (
 
 router = APIRouter(prefix="/v1/ingest", tags=["Ingestion"])
 
-UPLOAD_ROOT = Path("/tmp/cloudready_uploads")
 
-
-def save_upload(file: UploadFile, run_id: str, entity: str) -> Path:
+async def _run_slice_ingest(
+    *,
+    slice_name: str,
+    fn,
+    db: Session,
+    run_id: str,
+    file: UploadFile,
+) -> Dict[str, Any]:
     """
-    Save an uploaded CSV file to /tmp/cloudready_uploads with a consistent naming pattern.
+    Tiny wrapper so all slices behave the same. It lets the underlying
+    ingestion_engine handle CSV parsing + DB writes.
     """
-    UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
-    safe_run_id = "".join(ch for ch in run_id if ch.isalnum() or ch in ("-", "_"))
-    filename = f"{entity}_{safe_run_id}_{file.filename or 'upload.csv'}"
-    path = UPLOAD_ROOT / filename
+    if not run_id:
+        raise HTTPException(status_code=400, detail="run_id query parameter is required")
 
-    with path.open("wb") as buffer:
-        buffer.write(file.file.read())
+    try:
+        result = await fn(db=db, run_id=run_id, file=file)
+    except HTTPException:
+        # Let explicit HTTP errors bubble through
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=500,
+            detail=f"{slice_name} ingestion failed: {exc}",
+        ) from exc
 
-    return path
+    # Normalise response shape a bit
+    if not isinstance(result, dict):
+        result = {"raw_result": str(result)}
+
+    return {
+        "ok": True,
+        "slice": slice_name,
+        "run_id": run_id,
+        "details": result,
+    }
 
 
-@router.get("/routes")
-def get_ingest_routes() -> Dict[str, List[Dict[str, str]]]:
-    """
-    Introspection endpoint so the UI (and you via curl) can see what ingestion endpoints exist.
-    """
-    return {"routes": list_ingest_routes()}
-
-
-# ---------------------------------------------------------------------------
+# ------------------------------
 # Servers
-# ---------------------------------------------------------------------------
+# ------------------------------
 
 
 @router.post("/servers")
 async def ingest_servers_endpoint(
-    run_id: str = Form(...),
+    run_id: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    try:
-        csv_path = save_upload(file, run_id, "servers")
-        return ingest_servers(db, run_id, csv_path)
-    except ValueError as exc:
-        # Run not found
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error ingesting servers CSV: {exc}",
-        ) from exc
+    """
+    UI servers CSV upload endpoint.
+
+    Frontend calls:
+      POST /v1/ingest/servers?run_id=<run-id>
+      Content-Type: multipart/form-data with field "file"
+    """
+    return await _run_slice_ingest(
+        slice_name="servers",
+        fn=ingest_servers,
+        db=db,
+        run_id=run_id,
+        file=file,
+    )
 
 
-# ---------------------------------------------------------------------------
-# Storage
-# ---------------------------------------------------------------------------
+# ------------------------------
+# Storage volumes
+# ------------------------------
 
 
 @router.post("/storage")
 async def ingest_storage_endpoint(
-    run_id: str = Form(...),
+    run_id: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    try:
-        csv_path = save_upload(file, run_id, "storage")
-        return ingest_storage(db, run_id, csv_path)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error ingesting storage CSV: {exc}",
-        ) from exc
+    """
+    Storage volumes CSV upload.
+
+    Frontend will call:
+      POST /v1/ingest/storage?run_id=<run-id>
+    """
+    return await _run_slice_ingest(
+        slice_name="storage",
+        fn=ingest_storage,
+        db=db,
+        run_id=run_id,
+        file=file,
+    )
 
 
-# ---------------------------------------------------------------------------
-# Networks
-# ---------------------------------------------------------------------------
-
-
-@router.post("/networks")
-async def ingest_networks_endpoint(
-    run_id: str = Form(...),
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-) -> Dict[str, Any]:
-    try:
-        csv_path = save_upload(file, run_id, "networks")
-        return ingest_networks(db, run_id, csv_path)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error ingesting networks CSV: {exc}",
-        ) from exc
-
-
-# ---------------------------------------------------------------------------
+# ------------------------------
 # Databases
-# ---------------------------------------------------------------------------
+# ------------------------------
 
 
 @router.post("/databases")
 async def ingest_databases_endpoint(
-    run_id: str = Form(...),
+    run_id: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    try:
-        csv_path = save_upload(file, run_id, "databases")
-        return ingest_databases(db, run_id, csv_path)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error ingesting databases CSV: {exc}",
-        ) from exc
+    """
+    Databases CSV upload.
+
+    Frontend will call:
+      POST /v1/ingest/databases?run_id=<run-id>
+    """
+    return await _run_slice_ingest(
+        slice_name="databases",
+        fn=ingest_databases,
+        db=db,
+        run_id=run_id,
+        file=file,
+    )
 
 
-# ---------------------------------------------------------------------------
-# Applications
-# ---------------------------------------------------------------------------
+# ------------------------------
+# (Optional) other slices wiring
+# ------------------------------
+# These are here so we can easily plug them in later from the UI
+# if we want to expose uploads for business metadata, apps, etc.
 
 
 @router.post("/applications")
 async def ingest_applications_endpoint(
-    run_id: str = Form(...),
+    run_id: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    try:
-        csv_path = save_upload(file, run_id, "applications")
-        return ingest_applications(db, run_id, csv_path)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error ingesting applications CSV: {exc}",
-        ) from exc
-
-
-# ---------------------------------------------------------------------------
-# Dependencies
-# ---------------------------------------------------------------------------
-
-
-@router.post("/dependencies")
-async def ingest_dependencies_endpoint(
-    run_id: str = Form(...),
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-) -> Dict[str, Any]:
-    try:
-        csv_path = save_upload(file, run_id, "dependencies")
-        return ingest_dependencies(db, run_id, csv_path)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error ingesting dependencies CSV: {exc}",
-        ) from exc
-
-
-# ---------------------------------------------------------------------------
-# OS / Software Metadata
-# ---------------------------------------------------------------------------
-
-
-@router.post("/os-metadata")
-async def ingest_os_metadata_endpoint(
-    run_id: str = Form(...),
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-) -> Dict[str, Any]:
-    """
-    OS / software ingestion endpoint.
-
-    NOTE: The engine currently accepts the CSV and records metadata about the
-    upload, but does not yet persist rows into a specific OsMetadata table,
-    because the concrete model class is not yet wired up.
-    """
-    try:
-        csv_path = save_upload(file, run_id, "os_metadata")
-        return ingest_os_metadata(db, run_id, csv_path)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error ingesting OS metadata CSV: {exc}",
-        ) from exc
-
-
-# ---------------------------------------------------------------------------
-# Utilization
-# ---------------------------------------------------------------------------
-
-
-@router.post("/utilization")
-async def ingest_utilization_endpoint(
-    run_id: str = Form(...),
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-) -> Dict[str, Any]:
-    try:
-        csv_path = save_upload(file, run_id, "utilization")
-        return ingest_utilization(db, run_id, csv_path)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error ingesting utilization CSV: {exc}",
-        ) from exc
-
-
-# ---------------------------------------------------------------------------
-# Business Metadata
-# ---------------------------------------------------------------------------
+    return await _run_slice_ingest(
+        slice_name="applications",
+        fn=ingest_applications,
+        db=db,
+        run_id=run_id,
+        file=file,
+    )
 
 
 @router.post("/business")
 async def ingest_business_endpoint(
-    run_id: str = Form(...),
+    run_id: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    try:
-        csv_path = save_upload(file, run_id, "business")
-        return ingest_business(db, run_id, csv_path)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error ingesting business metadata CSV: {exc}",
-        ) from exc
+    return await _run_slice_ingest(
+        slice_name="business",
+        fn=ingest_business,
+        db=db,
+        run_id=run_id,
+        file=file,
+    )
 
 
-# ---------------------------------------------------------------------------
-# Licensing Metadata
-# ---------------------------------------------------------------------------
+@router.post("/dependencies")
+async def ingest_dependencies_endpoint(
+    run_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    return await _run_slice_ingest(
+        slice_name="dependencies",
+        fn=ingest_dependencies,
+        db=db,
+        run_id=run_id,
+        file=file,
+    )
 
 
 @router.post("/licensing")
 async def ingest_licensing_endpoint(
-    run_id: str = Form(...),
+    run_id: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    try:
-        csv_path = save_upload(file, run_id, "licensing")
-        return ingest_licensing(db, run_id, csv_path)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error ingesting licensing metadata CSV: {exc}",
-        ) from exc
+    return await _run_slice_ingest(
+        slice_name="licensing",
+        fn=ingest_licensing,
+        db=db,
+        run_id=run_id,
+        file=file,
+    )
+
+
+@router.post("/os-metadata")
+async def ingest_os_metadata_endpoint(
+    run_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    return await _run_slice_ingest(
+        slice_name="os_metadata",
+        fn=ingest_os_metadata,
+        db=db,
+        run_id=run_id,
+        file=file,
+    )
+
+
+@router.post("/networks")
+async def ingest_networks_endpoint(
+    run_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    return await _run_slice_ingest(
+        slice_name="networks",
+        fn=ingest_networks,
+        db=db,
+        run_id=run_id,
+        file=file,
+    )
+
+
+@router.post("/utilization")
+async def ingest_utilization_endpoint(
+    run_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    return await _run_slice_ingest(
+        slice_name="utilization",
+        fn=ingest_utilization,
+        db=db,
+        run_id=run_id,
+        file=file,
+    )
+
+
+# ------------------------------
+# Utility: list available ingest routes
+# ------------------------------
+
+
+@router.get("/routes")
+async def get_ingest_routes() -> List[Dict[str, str]]:
+    """
+    Simple debug helper – shows which ingestion routes are wired.
+    """
+    return list_ingest_routes()

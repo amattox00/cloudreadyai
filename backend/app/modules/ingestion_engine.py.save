@@ -2,49 +2,29 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, List
+import csv
+import io
+import logging
 
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
+from app.routers.runs import increment_ingest_counts
 
-# v2 servers ingestion: CSV -> normalized rows -> inventory_servers_v2
+# v2 ingestion path that actually writes servers into Postgres
 from app.modules.ingestion_core.server_ingestion_db_v2 import (
     ingest_servers_v2_from_csv_to_db,
-    ServersIngestionSummary,
 )
-
-# Run registry – so we can update the per-run ingest counters
-from app.routers.runs import increment_ingest_counts
 
 
 def list_ingest_routes() -> List[Dict[str, str]]:
     """
     Lightweight descriptor of ingest routes.
 
-    For the MVP, servers and storage are exposed via /v1/ingest.
+    For the MVP, only servers ingestion is fully wired.
     """
     return [
         {"slice": "servers", "method": "POST", "path": "/v1/ingest/servers"},
-        {"slice": "storage", "method": "POST", "path": "/v1/ingest/storage"},
     ]
-
-
-# -----------------------------
-# Shared helper
-# -----------------------------
-
-
-def _write_tmp_upload(file_bytes: bytes, tmp_name: str) -> Path:
-    """
-    Persist uploaded file bytes to /tmp and return the path.
-    """
-    tmp_path = Path(f"/tmp/{tmp_name}")
-    tmp_path.write_bytes(file_bytes)
-    return tmp_path
-
-
-# -----------------------------
-# Servers ingestion (v2)
-# -----------------------------
 
 
 async def ingest_servers(
@@ -53,30 +33,30 @@ async def ingest_servers(
     file: UploadFile,
 ) -> Dict[str, Any]:
     """
-    Servers ingestion:
+    MVP servers ingestion:
 
     - Save uploaded CSV to /tmp
     - Call the v2 ingestion engine to push rows into Postgres
-    - Use summary.rows_successful as 'servers_ingested'
-    - Update the in-memory run registry counters
+    - Count non-header lines as 'servers_ingested'
     - Return a simple JSON payload that the UI and router can use
     """
 
     # 1) Persist upload to a temp path
+    tmp_path = Path("/tmp/ingest_servers.csv")
     contents = await file.read()
-    tmp_path = _write_tmp_upload(contents, "ingest_servers.csv")
+    tmp_path.write_bytes(contents)
 
-    # 2) Run the tested v2 ingestion engine
-    summary: ServersIngestionSummary = ingest_servers_v2_from_csv_to_db(
-        csv_path=str(tmp_path),
+    # 2) Count rows (non-empty lines, minus header)
+    text = contents.decode("utf-8", errors="ignore")
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    servers_ingested = max(len(lines) - 1, 0)
+
+    # 3) Run the tested v2 ingestion engine
+    ingest_servers_v2_from_csv_to_db(
+        csv_path=tmp_path,
         db=db,
         run_id=run_id or "",
     )
-
-    servers_ingested = max(summary.rows_successful, 0)
-
-    # 3) Update the run registry counts so the pills/dashboard can move
-    increment_ingest_counts(run_id=run_id, servers=servers_ingested)
 
     # 4) Simple, stable response for the frontend/router
     return {
@@ -89,52 +69,18 @@ async def ingest_servers(
 
 
 # -----------------------------
-# Storage volumes ingestion (MVP)
+# Placeholders for other slices
 # -----------------------------
+# These are intentionally not wired yet. If they get called, we want
+# an explicit error instead of half-working behavior.
 
 
 async def ingest_storage(
-    db: Session,          # kept for symmetry / future use
+    db: Session,
     run_id: str,
     file: UploadFile,
 ) -> Dict[str, Any]:
-    """
-    MVP storage ingestion:
-
-    - Save uploaded CSV to /tmp
-    - Count non-empty lines (minus header) as 'storage_volumes_ingested'
-    - Update the run registry counts
-    - Return a JSON payload for the UI
-
-    NOTE: This version does NOT yet persist into a storage inventory table.
-    We'll plug that in once the storage schema and analytics are ready.
-    """
-
-    # 1) Persist upload to a temp path (optional but handy for debugging)
-    contents = await file.read()
-    _ = _write_tmp_upload(contents, "ingest_storage.csv")
-
-    # 2) Count rows: non-empty lines, minus header
-    text = contents.decode("utf-8", errors="ignore")
-    lines = [ln for ln in text.splitlines() if ln.strip()]
-    storage_ingested = max(len(lines) - 1, 0)
-
-    # 3) Update run registry so "STORAGE VOLUMES" pill can move
-    increment_ingest_counts(run_id=run_id, storage=storage_ingested)
-
-    # 4) Response for router/UI
-    return {
-        "slice": "storage",
-        "run_id": run_id,
-        "status": "ok",
-        "storage_ingested": storage_ingested,
-        "message": f"Storage CSV ingested successfully ({storage_ingested} rows)",
-    }
-
-
-# -----------------------------------------
-# Placeholders for other slices (Phase B/C)
-# -----------------------------------------
+    raise NotImplementedError("Storage ingestion is not wired yet.")
 
 
 async def ingest_databases(
