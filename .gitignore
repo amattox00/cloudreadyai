@@ -30,4 +30,6 @@ backups/
 # Ignore Python bytecode
 __pycache__/
 *.pyc
+# Frontend build artifacts
+frontend/dist/
 
