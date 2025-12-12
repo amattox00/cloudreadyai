@@ -1,117 +1,163 @@
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass
-from typing import List, TextIO, Optional, Literal
+import io
+from dataclasses import dataclass, field
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-from pydantic import BaseModel, Field, ValidationError, model_validator
+
+EXPECTED_HEADERS = [
+    "app_id",
+    "depends_on_app_id",
+    "dependency_type",
+    "notes",
+]
+
+# Keep this permissive for MVP. You can tighten later.
+ALLOWED_DEP_TYPES = {
+    "http",
+    "https",
+    "api",
+    "grpc",
+    "mq",
+    "kafka",
+    "amqp",
+    "sqs",
+    "sns",
+    "event",
+    "batch",
+    "file",
+    "ftp",
+    "sftp",
+    "sql",
+    "jdbc",
+    "odbc",
+    "db",
+    "cache",
+    "redis",
+    "memcached",
+    "rpc",
+    "other",
+    "",
+}
 
 
 @dataclass
-class DependencyIngestionResult:
+class DependencyEdge:
+    app_id: str
+    depends_on_app_id: str
+    dependency_type: str = ""
+    notes: str = ""
+
+
+@dataclass
+class DependenciesIngestionResult:
+    rows_processed: int = 0
+    rows_successful: int = 0
+    rows_failed: int = 0
+    errors: List[str] = field(default_factory=list)
+
+    # validation counters (non-fatal unless you choose otherwise)
+    self_dependencies: int = 0
+    invalid_type: int = 0
+    missing_required: int = 0
+    normalized_blanks: int = 0
+
+    # derived coverage counters (filled later if caller provides app ids)
+    unknown_targets: int = 0
+    unknown_sources: int = 0
+
+    records: List[DependencyEdge] = field(default_factory=list)
+
+
+def _norm(s: Optional[str]) -> str:
+    return (s or "").strip()
+
+
+def _rownum(idx: int) -> int:
+    # idx is 0-based for data rows
+    return idx + 2  # + header row
+
+
+def parse_dependencies_from_csv(
+    *,
+    file_like: io.StringIO,
+    known_app_ids: Optional[Set[str]] = None,
+) -> DependenciesIngestionResult:
     """
-    Standard ingestion result for dependencies v2.
-    Mirrors the pattern used by servers/storage/databases/applications.
+    Parse + validate Dependencies CSV into DependencyEdge records.
+
+    - Required: app_id, depends_on_app_id
+    - Normalizes whitespace
+    - Rejects self-dependencies (counts + skips)
+    - Validates dependency_type against ALLOWED_DEP_TYPES (counts + coerces to 'other')
+    - Tracks unknown sources/targets if known_app_ids is provided
     """
-
-    run_id: str
-    rows_processed: int
-    rows_successful: int
-    rows_failed: int
-    errors: List[str]
-    records: List["DependencyRow"]
-
-
-class DependencyRow(BaseModel):
-    """
-    One dependency edge between an application and either a server or a database.
-    """
-
-    app_name: str = Field(..., min_length=1)
-    environment: Optional[str] = None
-
-    # "server" → requires server_hostname
-    # "database" → requires database_name
-    dependency_type: Literal["server", "database"]
-
-    server_hostname: Optional[str] = None
-    database_name: Optional[str] = None
-    database_engine: Optional[str] = None
-
-    notes: Optional[str] = None
-    tags: Optional[str] = None
-
-    @model_validator(mode="after")
-    def check_target(self) -> "DependencyRow":
-        """
-        Enforce that the right target fields are present based on dependency_type.
-        """
-        if self.dependency_type == "server":
-            if not self.server_hostname or not self.server_hostname.strip():
-                raise ValueError(
-                    "server_hostname is required when dependency_type='server'"
-                )
-        elif self.dependency_type == "database":
-            if not self.database_name or not self.database_name.strip():
-                raise ValueError(
-                    "database_name is required when dependency_type='database'"
-                )
-        return self
-
-
-def ingest_dependencies_from_csv(
-    run_id: str,
-    file_like: TextIO,
-) -> DependencyIngestionResult:
-    """
-    Core CSV ingestion for dependencies v2.
-
-    - Reads dependencies_template_v2.csv style files
-    - Validates each row with DependencyRow
-    - Skips bad rows but records errors
-    """
-
+    result = DependenciesIngestionResult()
     reader = csv.DictReader(file_like)
 
-    rows_processed = 0
-    rows_successful = 0
-    rows_failed = 0
-    errors: List[str] = []
-    records: List[DependencyRow] = []
+    if reader.fieldnames is None:
+        result.errors.append("Dependencies CSV has no header row.")
+        result.rows_failed = 0
+        return result
 
-    # Assume header is on line 1; data starts from line 2
-    for line_number, raw in enumerate(reader, start=2):
-        rows_processed += 1
+    missing_headers = [h for h in EXPECTED_HEADERS if h not in reader.fieldnames]
+    if missing_headers:
+        result.errors.append(
+            f"Missing expected columns: {', '.join(missing_headers)}"
+        )
+        return result
 
-        try:
-            dependency_type_raw = (raw.get("dependency_type") or "").strip().lower()
+    for i, row in enumerate(reader):
+        if not row:
+            continue
 
-            row = DependencyRow(
-                app_name=(raw.get("app_name") or "").strip(),
-                environment=(raw.get("environment") or "").strip() or None,
-                dependency_type=dependency_type_raw,  # will be validated as "server" or "database"
-                server_hostname=(raw.get("server_hostname") or "").strip() or None,
-                database_name=(raw.get("database_name") or "").strip() or None,
-                database_engine=(raw.get("database_engine") or "").strip() or None,
-                notes=(raw.get("notes") or "").strip() or None,
-                tags=(raw.get("tags") or "").strip() or None,
+        result.rows_processed += 1
+
+        app_id = _norm(row.get("app_id"))
+        depends_on = _norm(row.get("depends_on_app_id"))
+        dep_type = _norm(row.get("dependency_type")).lower()
+        notes = _norm(row.get("notes"))
+
+        # required fields
+        if not app_id or not depends_on:
+            result.rows_failed += 1
+            result.missing_required += 1
+            result.errors.append(
+                f"Row {_rownum(i)} missing required app_id/depends_on_app_id."
             )
+            continue
 
-            records.append(row)
-            rows_successful += 1
+        # self-dependency
+        if app_id == depends_on:
+            result.rows_failed += 1
+            result.self_dependencies += 1
+            result.errors.append(
+                f"Row {_rownum(i)} invalid: app_id depends on itself ({app_id})."
+            )
+            continue
 
-        except ValidationError as ve:
-            rows_failed += 1
-            errors.append(f"Row {line_number}: validation error: {ve}")
-        except Exception as exc:  # Catch-all just in case
-            rows_failed += 1
-            errors.append(f"Row {line_number}: unexpected error: {exc}")
+        # dependency type validation (non-fatal)
+        if dep_type not in ALLOWED_DEP_TYPES:
+            result.invalid_type += 1
+            dep_type = "other"
 
-    return DependencyIngestionResult(
-        run_id=run_id,
-        rows_processed=rows_processed,
-        rows_successful=rows_successful,
-        rows_failed=rows_failed,
-        errors=errors,
-        records=records,
-    )
+        # unknown app coverage (non-fatal)
+        if known_app_ids is not None:
+            if app_id not in known_app_ids:
+                result.unknown_sources += 1
+            if depends_on not in known_app_ids:
+                result.unknown_targets += 1
+
+        result.records.append(
+            DependencyEdge(
+                app_id=app_id,
+                depends_on_app_id=depends_on,
+                dependency_type=dep_type,
+                notes=notes,
+            )
+        )
+        result.rows_successful += 1
+
+    result.rows_failed = max(result.rows_processed - result.rows_successful, result.rows_failed)
+    return result

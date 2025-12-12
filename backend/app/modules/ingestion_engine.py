@@ -23,8 +23,6 @@ from app.modules.ingestion_core.storage_ingestion_db_v2 import (
 )
 
 # Databases v2 ingestion:
-#   * ingest_databases_from_csv: CSV → DatabaseRow objects
-#   * persist_database_records_v2: DatabaseRow list → inventory_database_v2
 from app.modules.ingestion_core.databases_ingestion_v2 import (
     ingest_databases_from_csv,
 )
@@ -33,8 +31,6 @@ from app.modules.ingestion_core.databases_ingestion_db_v2 import (
 )
 
 # Applications v2 ingestion:
-#   * ingest_applications_from_csv: CSV → ApplicationRow objects
-#   * persist_application_records_v2: ApplicationRow list → inventory_applications_v2
 from app.modules.ingestion_core.applications_ingestion_v2 import (
     ingest_applications_from_csv,
 )
@@ -42,8 +38,11 @@ from app.modules.ingestion_core.applications_ingestion_db_v2 import (
     persist_application_records_v2,
 )
 
-# Run registry – used to increment per-run ingestion counters
-from app.routers.runs import increment_ingest_counts
+# Dependencies (hardened MVP module)
+from app.modules.ingest.dependencies import ingest_dependencies_csv
+
+# Run registry – used to update per-run ingestion counters
+from app.routers.runs import increment_ingest_counts, set_ingest_counts
 
 
 # -----------------------------
@@ -54,13 +53,14 @@ def list_ingest_routes() -> List[Dict[str, str]]:
     """
     Lightweight descriptor of ingest routes.
 
-    For the MVP, servers, storage, databases, and applications are exposed via /v1/ingest.
+    For the MVP, servers, storage, databases, applications, and dependencies are exposed via /v1/ingest.
     """
     return [
         {"slice": "servers", "method": "POST", "path": "/v1/ingest/servers"},
         {"slice": "storage", "method": "POST", "path": "/v1/ingest/storage"},
         {"slice": "databases", "method": "POST", "path": "/v1/ingest/databases"},
         {"slice": "applications", "method": "POST", "path": "/v1/ingest/applications"},
+        {"slice": "dependencies", "method": "POST", "path": "/v1/ingest/dependencies"},
     ]
 
 
@@ -86,14 +86,6 @@ async def ingest_servers(
     run_id: str,
     file: UploadFile,
 ) -> Dict[str, Any]:
-    """
-    Servers ingestion:
-
-    - Save CSV to /tmp
-    - Invoke v2 ingestion engine to persist into inventory_servers_v2
-    - Update run registry counts
-    - Return clean JSON payload
-    """
     contents = await file.read()
     tmp_path = _write_tmp_upload(contents, "ingest_servers.csv")
 
@@ -124,17 +116,6 @@ async def ingest_storage(
     run_id: str,
     file: UploadFile,
 ) -> Dict[str, Any]:
-    """
-    Storage ingestion (v2-backed):
-
-    - Save CSV to /tmp
-    - Invoke v2 storage ingestion engine:
-        * parse + validate CSV rows
-        * write into inventory_storage_v2
-    - rows_successful → storage counter
-    - Update run registry ingestion counts
-    - Return clean JSON payload
-    """
     contents = await file.read()
     tmp_path = _write_tmp_upload(contents, "ingest_storage.csv")
 
@@ -165,15 +146,6 @@ async def ingest_databases(
     run_id: str,
     file: UploadFile,
 ) -> Dict[str, Any]:
-    """
-    Databases ingestion (v2-backed):
-
-    - Read uploaded CSV into a text stream
-    - Parse + validate into DatabaseRow objects
-    - Persist valid rows into inventory_database_v2
-    - Update run registry database counts
-    - Return a clean JSON payload for the UI/router
-    """
     contents = await file.read()
     text = contents.decode("utf-8", errors="ignore")
     stream = io.StringIO(text)
@@ -211,15 +183,6 @@ async def ingest_applications(
     run_id: str,
     file: UploadFile,
 ) -> Dict[str, Any]:
-    """
-    Applications ingestion (v2-backed):
-
-    - Read uploaded CSV into a text stream
-    - Parse + validate into ApplicationRow objects
-    - Persist valid rows into inventory_applications_v2
-    - Update run registry applications counts
-    - Return a clean JSON payload for the UI/router
-    """
     contents = await file.read()
     text = contents.decode("utf-8", errors="ignore")
     stream = io.StringIO(text)
@@ -249,6 +212,63 @@ async def ingest_applications(
 
 
 # -----------------------------------------
+# Dependencies ingestion (hardened MVP)
+# -----------------------------------------
+
+async def ingest_dependencies(
+    db: Session,
+    run_id: str,
+    file: UploadFile,
+) -> Dict[str, Any]:
+    """
+    Dependencies ingestion (hardened MVP)
+
+    Expected CSV headers:
+      app_id, depends_on_app_id, dependency_type, notes
+
+    Idempotence:
+      - We replace existing DB rows for this run_id
+      - We SET the run_registry counter to the newly-inserted count (no ballooning)
+    """
+    contents = await file.read()
+    tmp_path = _write_tmp_upload(contents, "ingest_dependencies.csv")
+
+    result = ingest_dependencies_csv(
+        db=db,
+        run_id=run_id or "",
+        csv_path=str(tmp_path),
+        replace_existing=True,
+        detect_cycles=True,
+        max_errors=50,
+    )
+
+    rows_successful = int(result.get("rows_successful", 0))
+    replaced_existing = bool(result.get("replaced_existing", False))
+
+    # If we replaced existing, do NOT increment; set absolute count.
+    if replaced_existing:
+        set_ingest_counts(run_id=run_id, dependencies=rows_successful)
+    else:
+        increment_ingest_counts(run_id=run_id, dependencies=rows_successful)
+
+    return {
+        "slice": "dependencies",
+        "run_id": run_id,
+        "status": "ok",
+        "dependencies_ingested": rows_successful,
+        "rows_processed": int(result.get("rows_processed", 0)),
+        "rows_successful": rows_successful,
+        "rows_failed": int(result.get("rows_failed", 0)),
+        "duplicates_skipped": int(result.get("duplicates_skipped", 0)),
+        "deleted_existing": int(result.get("deleted_existing", 0)),
+        "replaced_existing": replaced_existing,
+        "cycles_detected": int(result.get("cycles_detected", 0)),
+        "errors": result.get("errors", []),
+        "message": result.get("message", f"Dependencies CSV ingested successfully ({rows_successful} rows)"),
+    }
+
+
+# -----------------------------------------
 # Placeholders for other ingestion slices
 # -----------------------------------------
 
@@ -266,14 +286,6 @@ async def ingest_business(
     file: UploadFile,
 ) -> Dict[str, Any]:
     raise NotImplementedError("Business metadata ingestion is not wired yet.")
-
-
-async def ingest_dependencies(
-    db: Session,
-    run_id: str,
-    file: UploadFile,
-) -> Dict[str, Any]:
-    raise NotImplementedError("Dependencies ingestion is not wired yet.")
 
 
 async def ingest_os_metadata(

@@ -49,6 +49,7 @@ class RunRecord(BaseModel):
     network_ingested: int = 0
     databases_ingested: int = 0
     applications_ingested: int = 0
+    dependencies_ingested: int = 0
     summary: Optional[RunSummary] = None
 
 
@@ -67,6 +68,7 @@ def increment_ingest_counts(
     storage: int = 0,
     databases: int = 0,
     applications: int = 0,
+    dependencies: int = 0,
     network: int = 0,
 ) -> None:
     """
@@ -86,7 +88,58 @@ def increment_ingest_counts(
     record.storage_ingested += max(storage, 0)
     record.databases_ingested += max(databases, 0)
     record.applications_ingested += max(applications, 0)
+    record.dependencies_ingested += max(dependencies, 0)
     record.network_ingested += max(network, 0)
+
+
+def set_ingest_counts(
+    run_id: str,
+    *,
+    servers: Optional[int] = None,
+    storage: Optional[int] = None,
+    databases: Optional[int] = None,
+    applications: Optional[int] = None,
+    dependencies: Optional[int] = None,
+    network: Optional[int] = None,
+) -> None:
+    """
+    Set per-slice ingestion counters for a given run (absolute values).
+
+    This is required for idempotent "replace existing" re-uploads where we
+    should NOT keep incrementing the in-memory counters.
+    """
+    if not run_id:
+        return
+
+    record = _RUN_REGISTRY.get(run_id)
+    if not record:
+        return
+
+    def _clamp(v: Optional[int]) -> Optional[int]:
+        if v is None:
+            return None
+        return max(int(v), 0)
+
+    s = _clamp(servers)
+    st = _clamp(storage)
+    dbs = _clamp(databases)
+    apps = _clamp(applications)
+    deps = _clamp(dependencies)
+    net = _clamp(network)
+
+    if s is not None:
+        record.servers_ingested = s
+    if st is not None:
+        record.storage_ingested = st
+    if dbs is not None:
+        record.databases_ingested = dbs
+    if apps is not None:
+        record.applications_ingested = apps
+    if deps is not None:
+        record.dependencies_ingested = deps
+    if net is not None:
+        record.network_ingested = net
+
 
 @router.post("", response_model=RunRecord)
 def create_run(payload: RunCreate) -> RunRecord:

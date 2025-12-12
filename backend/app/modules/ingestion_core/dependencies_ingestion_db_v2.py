@@ -4,44 +4,42 @@ from typing import Iterable, List
 
 from sqlalchemy.orm import Session
 
-from app.db import SessionLocal
-from app.models.inventory_dependency_v2 import InventoryDependencyV2
-from app.modules.ingestion_core.dependencies_ingestion_v2 import DependencyRow
+from app.models.app_dependency import AppDependency
+from app.modules.ingestion_core.dependencies_ingestion_v2 import DependencyEdge
 
 
-def persist_dependency_records_v2(
+def persist_dependencies_v2(
+    *,
+    db: Session,
     run_id: str,
-    records: Iterable[DependencyRow],
+    records: List[DependencyEdge],
+    replace_existing: bool = True,
 ) -> int:
     """
-    Persist dependencies (v2) into inventory_dependencies_v2.
+    Persist dependency edges into app_dependencies (AppDependency).
 
-    Mirrors the pattern used by server/storage/databases/applications v2 DB writers.
+    MVP approach:
+      - Optionally delete existing dependencies for run_id
+      - Insert rows
     """
-    session: Session = SessionLocal()
+    if not run_id:
+        return 0
+
+    if replace_existing:
+        db.query(AppDependency).filter(AppDependency.run_id == run_id).delete()
+
     inserted = 0
-
-    try:
-        for row in records:
-            dep = InventoryDependencyV2(
+    for r in records:
+        db.add(
+            AppDependency(
                 run_id=run_id,
-                app_name=row.app_name,
-                environment=row.environment,
-                dependency_type=row.dependency_type,
-                server_hostname=row.server_hostname,
-                database_name=row.database_name,
-                database_engine=row.database_engine,
-                notes=row.notes,
-                tags=row.tags,
+                app_id=r.app_id,
+                depends_on_app_id=r.depends_on_app_id,
+                dependency_type=r.dependency_type,
+                notes=r.notes,
             )
-            session.add(dep)
-            inserted += 1
+        )
+        inserted += 1
 
-        session.commit()
-        return inserted
-
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
+    db.commit()
+    return inserted
