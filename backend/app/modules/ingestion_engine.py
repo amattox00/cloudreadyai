@@ -8,7 +8,7 @@ from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
 # -----------------------------
-# v2 ingestion engines (servers + storage + databases)
+# v2 ingestion engines
 # -----------------------------
 
 # Servers v2 ingestion: CSV → normalized rows → inventory_servers_v2
@@ -32,6 +32,16 @@ from app.modules.ingestion_core.databases_ingestion_db_v2 import (
     persist_database_records_v2,
 )
 
+# Applications v2 ingestion:
+#   * ingest_applications_from_csv: CSV → ApplicationRow objects
+#   * persist_application_records_v2: ApplicationRow list → inventory_applications_v2
+from app.modules.ingestion_core.applications_ingestion_v2 import (
+    ingest_applications_from_csv,
+)
+from app.modules.ingestion_core.applications_ingestion_db_v2 import (
+    persist_application_records_v2,
+)
+
 # Run registry – used to increment per-run ingestion counters
 from app.routers.runs import increment_ingest_counts
 
@@ -40,24 +50,23 @@ from app.routers.runs import increment_ingest_counts
 # Listed ingestion routes for UI
 # -----------------------------
 
-
 def list_ingest_routes() -> List[Dict[str, str]]:
     """
     Lightweight descriptor of ingest routes.
 
-    For the MVP, servers, storage, and databases are exposed via /v1/ingest.
+    For the MVP, servers, storage, databases, and applications are exposed via /v1/ingest.
     """
     return [
         {"slice": "servers", "method": "POST", "path": "/v1/ingest/servers"},
         {"slice": "storage", "method": "POST", "path": "/v1/ingest/storage"},
         {"slice": "databases", "method": "POST", "path": "/v1/ingest/databases"},
+        {"slice": "applications", "method": "POST", "path": "/v1/ingest/applications"},
     ]
 
 
 # -----------------------------
 # Shared helper
 # -----------------------------
-
 
 def _write_tmp_upload(file_bytes: bytes, tmp_name: str) -> Path:
     """
@@ -72,7 +81,6 @@ def _write_tmp_upload(file_bytes: bytes, tmp_name: str) -> Path:
 # Servers ingestion (v2)
 # -----------------------------
 
-
 async def ingest_servers(
     db: Session,
     run_id: str,
@@ -86,7 +94,6 @@ async def ingest_servers(
     - Update run registry counts
     - Return clean JSON payload
     """
-
     contents = await file.read()
     tmp_path = _write_tmp_upload(contents, "ingest_servers.csv")
 
@@ -97,7 +104,6 @@ async def ingest_servers(
     )
 
     servers_ingested = max(summary.rows_successful, 0)
-
     increment_ingest_counts(run_id=run_id, servers=servers_ingested)
 
     return {
@@ -112,7 +118,6 @@ async def ingest_servers(
 # -----------------------------
 # Storage volumes ingestion (v2)
 # -----------------------------
-
 
 async def ingest_storage(
     db: Session,
@@ -130,7 +135,6 @@ async def ingest_storage(
     - Update run registry ingestion counts
     - Return clean JSON payload
     """
-
     contents = await file.read()
     tmp_path = _write_tmp_upload(contents, "ingest_storage.csv")
 
@@ -141,7 +145,6 @@ async def ingest_storage(
     )
 
     storage_ingested = max(getattr(summary, "rows_successful", 0), 0)
-
     increment_ingest_counts(run_id=run_id, storage=storage_ingested)
 
     return {
@@ -157,7 +160,6 @@ async def ingest_storage(
 # Databases ingestion (v2-backed)
 # -----------------------------------------
 
-
 async def ingest_databases(
     db: Session,
     run_id: str,
@@ -172,24 +174,21 @@ async def ingest_databases(
     - Update run registry database counts
     - Return a clean JSON payload for the UI/router
     """
-
-    # 1) Read uploaded file contents
     contents = await file.read()
     text = contents.decode("utf-8", errors="ignore")
     stream = io.StringIO(text)
 
-    # 2) CSV → validated DatabaseRow records
     result = ingest_databases_from_csv(run_id=run_id or "", file_like=stream)
 
-    # 3) Persist into inventory_database_v2
     inserted = 0
     if result.records:
-        inserted = persist_database_records_v2(run_id=run_id or "", records=result.records)
+        inserted = persist_database_records_v2(
+            run_id=run_id or "",
+            records=result.records,
+        )
 
-    # 4) Update run registry so DATABASES pill can move
     increment_ingest_counts(run_id=run_id, databases=inserted)
 
-    # 5) Clean response for the router/UI
     return {
         "slice": "databases",
         "run_id": run_id,
@@ -204,17 +203,54 @@ async def ingest_databases(
 
 
 # -----------------------------------------
-# Placeholders for other ingestion slices
+# Applications ingestion (v2-backed)
 # -----------------------------------------
-
 
 async def ingest_applications(
     db: Session,
     run_id: str,
     file: UploadFile,
 ) -> Dict[str, Any]:
-    raise NotImplementedError("Applications ingestion is not wired yet.")
+    """
+    Applications ingestion (v2-backed):
 
+    - Read uploaded CSV into a text stream
+    - Parse + validate into ApplicationRow objects
+    - Persist valid rows into inventory_applications_v2
+    - Update run registry applications counts
+    - Return a clean JSON payload for the UI/router
+    """
+    contents = await file.read()
+    text = contents.decode("utf-8", errors="ignore")
+    stream = io.StringIO(text)
+
+    result = ingest_applications_from_csv(run_id=run_id or "", file_like=stream)
+
+    inserted = 0
+    if result.records:
+        inserted = persist_application_records_v2(
+            run_id=run_id or "",
+            records=result.records,
+        )
+
+    increment_ingest_counts(run_id=run_id, applications=inserted)
+
+    return {
+        "slice": "applications",
+        "run_id": run_id,
+        "status": "ok",
+        "applications_ingested": inserted,
+        "rows_processed": result.rows_processed,
+        "rows_successful": result.rows_successful,
+        "rows_failed": result.rows_failed,
+        "message": f"Applications CSV ingested successfully ({inserted} rows)",
+        "errors": result.errors,
+    }
+
+
+# -----------------------------------------
+# Placeholders for other ingestion slices
+# -----------------------------------------
 
 async def ingest_networks(
     db: Session,

@@ -48,6 +48,7 @@ class RunRecord(BaseModel):
     storage_ingested: int = 0
     network_ingested: int = 0
     databases_ingested: int = 0
+    applications_ingested: int = 0
     summary: Optional[RunSummary] = None
 
 
@@ -64,9 +65,16 @@ def increment_ingest_counts(
     run_id: str,
     servers: int = 0,
     storage: int = 0,
-    network: int = 0,
     databases: int = 0,
+    applications: int = 0,
+    network: int = 0,
 ) -> None:
+    """
+    Increment per-slice ingestion counters for a given run.
+
+    Any parameter can be omitted (defaults to 0). Negative values are clamped
+    to 0 so we only ever add to the counts.
+    """
     if not run_id:
         return
 
@@ -76,9 +84,9 @@ def increment_ingest_counts(
 
     record.servers_ingested += max(servers, 0)
     record.storage_ingested += max(storage, 0)
-    record.network_ingested += max(network, 0)
     record.databases_ingested += max(databases, 0)
-
+    record.applications_ingested += max(applications, 0)
+    record.network_ingested += max(network, 0)
 
 @router.post("", response_model=RunRecord)
 def create_run(payload: RunCreate) -> RunRecord:
