@@ -1,0 +1,48 @@
+{
+  "slice": "storage",
+  "version": "2025.12.12",
+  "last_updated": "2025-12-12",
+  "required_headers": ["hostname", "volume_id", "capacity_gb"],
+  "optional_headers": [
+    "used_gb",
+    "provisioned_gb",
+    "iops",
+    "latency_ms",
+    "storage_type",
+    "environment",
+    "datastore",
+    "storage_array",
+    "protocol",
+    "tier",
+    "raid_type",
+    "is_replicated",
+    "notes"
+  ],
+  "header_aliases": {
+    "server_id": "hostname",
+    "server": "hostname",
+    "host": "hostname",
+
+    "volume_name": "volume_id",
+    "volume": "volume_id",
+    "vol_name": "volume_id",
+
+    "size_gb": "capacity_gb",
+    "capacity_gb": "capacity_gb",
+    "size": "capacity_gb",
+
+    "used": "used_gb",
+    "used_storage_gb": "used_gb",
+
+    "type": "storage_type",
+
+    "mount": "notes",
+    "mount_path": "notes",
+    "path": "notes"
+  },
+  "policy": {
+    "unknown_columns": "warn",
+    "missing_optional": "warn",
+    "missing_required": "block"
+  }
+}

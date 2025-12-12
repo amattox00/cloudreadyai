@@ -9,16 +9,24 @@ from pydantic import BaseModel, Field, ValidationError
 class ApplicationRow(BaseModel):
     """
     One row of applications CSV (v2).
+
+    NOTE:
+      - app_id is required (template-required and needed for joins/dependencies)
+      - environment is optional (template-optional). If omitted, it remains None.
     """
 
+    app_id: str = Field(..., description="Application unique identifier")
     app_name: str = Field(..., description="Application name")
+
     owner: Optional[str] = None
     business_unit: Optional[str] = None
-    environment: str
+    environment: Optional[str] = None
+
     description: Optional[str] = None
     tier: Optional[str] = None
     sla_hours: Optional[float] = None
     criticality: Optional[str] = None
+
     depends_on_servers: Optional[str] = None
     depends_on_databases: Optional[str] = None
     tags: Optional[str] = None

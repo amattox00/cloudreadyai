@@ -14,7 +14,7 @@ from app.routers import ingestion_storage_v2
 from app.routers import run_summary_v2  # ✅ NEW: Phase C summary router
 from app.routers import ingestion_databases_v2
 from app.routers import ingestion_applications_v2
-#from app.routers import ingestion_dependencies_v2
+# from app.routers import ingestion_dependencies_v2
 from app.routers import ingestion_networks_v2
 from app.routers import ingestion_os_software_v2
 from app.routers import ingestion_business_v2
@@ -52,7 +52,7 @@ app.include_router(run_summary_v2.router)  # ✅ NEW: exposes /v1/runs/{run_id}/
 app.include_router(ingestion_storage_v2.router)
 app.include_router(ingestion_databases_v2.router)
 app.include_router(ingestion_applications_v2.router)
-#app.include_router(ingestion_dependencies_v2.router)
+# app.include_router(ingestion_dependencies_v2.router)
 app.include_router(ingestion_networks_v2.router)
 app.include_router(ingestion_os_software_v2.router)
 app.include_router(ingestion_business_v2.router)
@@ -61,3 +61,8 @@ app.include_router(ingestion_licenses_v2.router)
 app.include_router(run_rollup_v2.router)
 app.include_router(analysis_v2.router)
 app.include_router(run_insights_v2_router)
+
+# Health endpoint (must be defined AFTER app exists)
+@app.get("/health")
+def health():
+    return {"ok": True}

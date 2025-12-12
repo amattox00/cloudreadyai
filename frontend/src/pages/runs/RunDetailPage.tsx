@@ -16,11 +16,12 @@ interface RunRecord {
   servers_ingested?: number;
   storage_ingested?: number;
   network_ingested?: number;
-  databases_ingested?: number; // prep for DB slice wiring
+  databases_ingested?: number; // Databases slice wiring
   applications_ingested?: number; // Applications slice wiring
+  dependencies_ingested?: number; // ✅ Dependencies slice wiring
 }
 
-type SliceKey = "servers" | "storage" | "databases" | "applications";
+type SliceKey = "servers" | "storage" | "databases" | "applications" | "dependencies";
 
 interface UploadState {
   file?: File;
@@ -50,6 +51,7 @@ export default function RunDetailPage() {
     storage: { ...initialUploadState },
     databases: { ...initialUploadState },
     applications: { ...initialUploadState },
+    dependencies: { ...initialUploadState },
   });
 
   const tabs: { id: TabId; label: string }[] = [
@@ -170,7 +172,8 @@ export default function RunDetailPage() {
         slice === "servers" ||
         slice === "storage" ||
         slice === "databases" ||
-        slice === "applications"
+        slice === "applications" ||
+        slice === "dependencies"
       ) {
         void fetchRun();
       }
@@ -214,6 +217,7 @@ export default function RunDetailPage() {
   const storageIngested = run?.storage_ingested ?? 0;
   const databasesIngested = run?.databases_ingested ?? 0;
   const applicationsIngested = run?.applications_ingested ?? 0;
+  const dependenciesIngested = run?.dependencies_ingested ?? 0;
 
   return (
     <div className="px-6 py-6 space-y-6">
@@ -250,11 +254,7 @@ export default function RunDetailPage() {
       </div>
 
       {/* Loading / error */}
-      {loading && (
-        <div className="text-sm text-gray-500">
-          Loading assessment...
-        </div>
-      )}
+      {loading && <div className="text-sm text-gray-500">Loading assessment...</div>}
       {!loading && error && (
         <div className="border border-red-200 bg-red-50 text-red-700 text-sm px-3 py-2 rounded">
           {error}
@@ -304,6 +304,7 @@ export default function RunDetailPage() {
               storageIngested={storageIngested}
               databasesIngested={databasesIngested}
               applicationsIngested={applicationsIngested}
+              dependenciesIngested={dependenciesIngested}
               uploads={uploads}
               onFileChange={handleFileChange}
               onUpload={handleUpload}
@@ -343,9 +344,7 @@ function OverviewTab({ run }: { run: RunRecord | null }) {
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {/* Left: Summary */}
       <div className="border border-gray-200 bg-white rounded-md shadow-sm p-4 space-y-3">
-        <h2 className="text-sm font-medium text-gray-900">
-          Assessment summary
-        </h2>
+        <h2 className="text-sm font-medium text-gray-900">Assessment summary</h2>
         <p className="text-xs text-gray-600">
           High-level details including source, status, and creation time.
         </p>
@@ -377,12 +376,10 @@ function OverviewTab({ run }: { run: RunRecord | null }) {
 
       {/* Right: Placeholder for future portfolio / client info */}
       <div className="border border-gray-200 bg-white rounded-md shadow-sm p-4 space-y-3">
-        <h2 className="text-sm font-medium text-gray-900">
-          Portfolio context
-        </h2>
+        <h2 className="text-sm font-medium text-gray-900">Portfolio context</h2>
         <p className="text-xs text-gray-600">
-          This section will eventually show how this assessment maps into your
-          broader client portfolio, workloads, and migration plans.
+          This section will eventually show how this assessment maps into your broader
+          client portfolio, workloads, and migration plans.
         </p>
         <div className="border border-dashed border-gray-300 rounded-md h-32 flex items-center justify-center text-xs text-gray-400">
           Coming soon
@@ -401,6 +398,7 @@ function IngestionTab({
   storageIngested,
   databasesIngested,
   applicationsIngested,
+  dependenciesIngested,
   uploads,
   onFileChange,
   onUpload,
@@ -409,43 +407,29 @@ function IngestionTab({
   storageIngested: number;
   databasesIngested: number;
   applicationsIngested: number;
+  dependenciesIngested: number;
   uploads: Record<SliceKey, UploadState>;
-  onFileChange: (
-    slice: SliceKey
-  ) => (event: ChangeEvent<HTMLInputElement>) => void;
+  onFileChange: (slice: SliceKey) => (event: ChangeEvent<HTMLInputElement>) => void;
   onUpload: (slice: SliceKey) => () => void;
 }) {
   return (
     <div className="space-y-6">
       {/* Top summary cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-        <SummaryCard
-          title="Servers ingested"
-          value={serversIngested.toString()}
-        />
-        <SummaryCard
-          title="Storage volumes"
-          value={storageIngested.toString()}
-        />
-        <SummaryCard
-          title="Databases"
-          value={databasesIngested.toString()}
-        />
-        <SummaryCard
-          title="Applications"
-          value={applicationsIngested.toString()}
-        />
+      <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
+        <SummaryCard title="Servers ingested" value={serversIngested.toString()} />
+        <SummaryCard title="Storage volumes" value={storageIngested.toString()} />
+        <SummaryCard title="Databases" value={databasesIngested.toString()} />
+        <SummaryCard title="Applications" value={applicationsIngested.toString()} />
+        <SummaryCard title="Dependencies" value={dependenciesIngested.toString()} />
       </div>
 
       {/* Ingestion overview & upload controls */}
       <div className="border border-gray-200 bg-white rounded-md shadow-sm p-4 space-y-4">
-        <h3 className="text-sm font-medium text-gray-900">
-          Ingestion overview
-        </h3>
+        <h3 className="text-sm font-medium text-gray-900">Ingestion overview</h3>
         <p className="text-xs text-gray-600">
-          Upload CSV data for each slice in this assessment. Servers are wired
-          end-to-end today. Storage volumes and databases use the same ingestion
-          pattern and can be wired to their v2 engines as they come online.
+          Upload CSV data for each slice in this assessment. Servers are wired end-to-end today.
+          Storage volumes, databases, applications, and dependencies use the same ingestion pattern
+          and can be enhanced further as their v2 engines come online.
         </p>
 
         <div className="space-y-3">
@@ -481,6 +465,14 @@ function IngestionTab({
             onFileChange={onFileChange("applications")}
             onUpload={onUpload("applications")}
           />
+          <SliceUploadRow
+            label="Dependencies CSV"
+            description="Application-to-application dependency edges (app_id → depends_on_app_id)."
+            slice="dependencies"
+            state={uploads.dependencies}
+            onFileChange={onFileChange("dependencies")}
+            onUpload={onUpload("dependencies")}
+          />
         </div>
       </div>
 
@@ -488,7 +480,7 @@ function IngestionTab({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <ChartCard
           title="Ingestion status by resource type"
-          description="As more slices are ingested, this chart will show coverage across servers, storage, and databases."
+          description="As more slices are ingested, this chart will show coverage across servers, storage, databases, applications, and dependencies."
         />
         <ChartCard
           title="Utilization and trends"
@@ -506,12 +498,8 @@ function IngestionTab({
 function SummaryCard({ title, value }: { title: string; value: string }) {
   return (
     <div className="border border-gray-200 bg-white rounded-md px-4 py-4 shadow-sm">
-      <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">
-        {title}
-      </p>
-      <p className="text-lg font-semibold text-gray-900 mt-1">
-        {value}
-      </p>
+      <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">{title}</p>
+      <p className="text-lg font-semibold text-gray-900 mt-1">{value}</p>
     </div>
   );
 }
@@ -535,12 +523,8 @@ function SliceUploadRow({
     <div className="border border-gray-100 rounded-md px-3 py-3">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
-          <p className="text-sm font-medium text-gray-900">
-            {label}
-          </p>
-          <p className="text-xs text-gray-600">
-            {description}
-          </p>
+          <p className="text-sm font-medium text-gray-900">{label}</p>
+          <p className="text-xs text-gray-600">{description}</p>
         </div>
         <div className="flex flex-col sm:flex-row sm:items-center gap-2">
           <input
@@ -559,35 +543,17 @@ function SliceUploadRow({
           </button>
         </div>
       </div>
-      {state.error && (
-        <p className="mt-1 text-xs text-red-600">
-          {state.error}
-        </p>
-      )}
-      {state.okMessage && (
-        <p className="mt-1 text-xs text-green-600">
-          {state.okMessage}
-        </p>
-      )}
+      {state.error && <p className="mt-1 text-xs text-red-600">{state.error}</p>}
+      {state.okMessage && <p className="mt-1 text-xs text-green-600">{state.okMessage}</p>}
     </div>
   );
 }
 
-function ChartCard({
-  title,
-  description,
-}: {
-  title: string;
-  description: string;
-}) {
+function ChartCard({ title, description }: { title: string; description: string }) {
   return (
     <div className="border border-gray-200 bg-white rounded-md shadow-sm p-4">
-      <h3 className="text-sm font-medium text-gray-900 mb-2">
-        {title}
-      </h3>
-      <p className="text-xs text-gray-600 mb-4">
-        {description}
-      </p>
+      <h3 className="text-sm font-medium text-gray-900 mb-2">{title}</h3>
+      <p className="text-xs text-gray-600 mb-4">{description}</p>
       <div className="h-48 border border-dashed border-gray-300 rounded flex items-center justify-center text-xs text-gray-400">
         Chart placeholder
       </div>
@@ -598,8 +564,8 @@ function ChartCard({
 function PlaceholderTab({ title }: { title: string }) {
   return (
     <div className="border border-gray-200 bg-white rounded-md shadow-sm p-6 text-sm text-gray-600">
-      {title} workspace wiring is planned for the MVP. The ingestion and run
-      registry flows you just validated will feed this section.
+      {title} workspace wiring is planned for the MVP. The ingestion and run registry flows you just
+      validated will feed this section.
     </div>
   );
 }

@@ -1,0 +1,31 @@
+{
+  "slice": "applications",
+  "version": "2025.12.12",
+  "last_updated": "2025-12-12",
+  "required_headers": ["app_id", "app_name", "environment"],
+  "optional_headers": [
+    "owner",
+    "business_unit",
+    "description",
+    "tier",
+    "sla_hours",
+    "criticality",
+    "depends_on_servers",
+    "depends_on_databases",
+    "tags",
+    "notes"
+  ],
+  "header_aliases": {
+    "application_id": "app_id",
+    "id": "app_id",
+    "name": "app_name",
+    "application": "app_name",
+    "app": "app_name",
+    "env": "environment"
+  },
+  "policy": {
+    "unknown_columns": "warn",
+    "missing_optional": "warn",
+    "missing_required": "block"
+  }
+}

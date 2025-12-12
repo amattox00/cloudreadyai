@@ -1,0 +1,45 @@
+{
+  "slice": "databases",
+  "version": "2025.12.12",
+  "last_updated": "2025-12-12",
+  "required_headers": ["hostname", "db_name", "db_engine"],
+  "optional_headers": [
+    "engine_version",
+    "environment",
+    "platform",
+    "cluster_name",
+    "port",
+    "db_role",
+    "ha_enabled",
+    "criticality",
+    "owner",
+    "cpu_cores",
+    "memory_gb",
+    "storage_gb",
+    "allocated_storage_gb",
+    "used_storage_gb",
+    "is_cloud",
+    "cloud_provider",
+    "region",
+    "tags",
+    "notes"
+  ],
+  "header_aliases": {
+    "host": "hostname",
+    "server": "hostname",
+    "instance": "hostname",
+    "database": "db_name",
+    "name": "db_name",
+    "db": "db_name",
+    "engine": "db_engine",
+    "db_type": "db_engine",
+    "db_engine_type": "db_engine",
+    "version": "engine_version",
+    "engine_ver": "engine_version"
+  },
+  "policy": {
+    "unknown_columns": "warn",
+    "missing_optional": "warn",
+    "missing_required": "block"
+  }
+}

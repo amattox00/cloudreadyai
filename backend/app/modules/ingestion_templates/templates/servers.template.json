@@ -1,0 +1,28 @@
+{
+  "slice": "servers",
+  "version": "2025.12.12",
+  "last_updated": "2025-12-12",
+  "required_headers": ["hostname", "os", "cpu_cores", "ram_gb"],
+  "optional_headers": ["ip_address", "environment", "role", "vcenter", "cluster", "datacenter", "notes"],
+  "header_aliases": {
+    "host": "hostname",
+    "server_name": "hostname",
+    "name": "hostname",
+    "ip": "ip_address",
+    "ipaddr": "ip_address",
+    "operating_system": "os",
+    "os_name": "os",
+    "cpu": "cpu_cores",
+    "cores": "cpu_cores",
+    "memory_gb": "ram_gb",
+    "mem_gb": "ram_gb",
+    "ram": "ram_gb",
+    "env": "environment",
+    "tier": "role"
+  },
+  "policy": {
+    "unknown_columns": "warn",
+    "missing_optional": "warn",
+    "missing_required": "block"
+  }
+}

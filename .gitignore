@@ -1,35 +1,38 @@
-# Python
+# ---- Python ----
 __pycache__/
 *.py[cod]
-
-# Virtualenv
-.venv/
-env/
-venv/
-
-# Node / frontend
-node_modules/
+*.pyo
+*.pyd
+*.so
+*.egg-info/
 dist/
 build/
-
-# Logs & temp
-*.log
-*.tmp
-
-# Backup archives
-backups/
-*.tar
-*.tar.gz
-*.tgz
-*.zip
-*.bak
-
-# Env files
+.venv/
+venv/
 .env
 
-# Ignore Python bytecode
-__pycache__/
-*.pyc
-# Frontend build artifacts
-frontend/dist/
+# ---- Node / Frontend ----
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
+# ---- OS / Editor ----
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# ---- Local backups ----
+*.bak
+*.bak.*
+*.backup
+*.backup.*
+
+# ---- Project temp output ----
+reports/
+backend/reports/
+tmp/

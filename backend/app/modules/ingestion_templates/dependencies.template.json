@@ -1,0 +1,29 @@
+{
+  "slice": "dependencies",
+  "required_headers": [
+    "app_id",
+    "depends_on_app_id"
+  ],
+  "optional_headers": [
+    "dependency_type",
+    "notes"
+  ],
+  "header_aliases": {
+    "app": "app_id",
+    "application_id": "app_id",
+    "source_app_id": "app_id",
+    "depends_on": "depends_on_app_id",
+    "depends_on_id": "depends_on_app_id",
+    "target_app_id": "depends_on_app_id",
+    "type": "dependency_type",
+    "dependency": "dependency_type",
+    "comment": "notes",
+    "note": "notes",
+    "description": "notes"
+  },
+  "policy": {
+    "unknown_columns": "warn",
+    "missing_optional": "warn",
+    "missing_required": "block"
+  }
+}
