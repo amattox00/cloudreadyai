@@ -47,7 +47,7 @@ class RunRecord(BaseModel):
     servers_ingested: int = 0
     storage_ingested: int = 0
     network_ingested: int = 0
-
+    databases_ingested: int = 0
     summary: Optional[RunSummary] = None
 
 
@@ -65,6 +65,7 @@ def increment_ingest_counts(
     servers: int = 0,
     storage: int = 0,
     network: int = 0,
+    databases: int = 0,
 ) -> None:
     if not run_id:
         return
@@ -76,6 +77,7 @@ def increment_ingest_counts(
     record.servers_ingested += max(servers, 0)
     record.storage_ingested += max(storage, 0)
     record.network_ingested += max(network, 0)
+    record.databases_ingested += max(databases, 0)
 
 
 @router.post("", response_model=RunRecord)
