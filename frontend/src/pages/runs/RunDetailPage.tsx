@@ -17,9 +17,10 @@ interface RunRecord {
   storage_ingested?: number;
   network_ingested?: number;
   databases_ingested?: number; // prep for DB slice wiring
+  applications_ingested?: number; // Applications slice wiring
 }
 
-type SliceKey = "servers" | "storage" | "databases";
+type SliceKey = "servers" | "storage" | "databases" | "applications";
 
 interface UploadState {
   file?: File;
@@ -48,6 +49,7 @@ export default function RunDetailPage() {
     servers: { ...initialUploadState },
     storage: { ...initialUploadState },
     databases: { ...initialUploadState },
+    applications: { ...initialUploadState },
   });
 
   const tabs: { id: TabId; label: string }[] = [
@@ -164,7 +166,12 @@ export default function RunDetailPage() {
       }));
 
       // Refresh run so counters & tiles update for these slices
-      if (slice === "servers" || slice === "storage" || slice === "databases") {
+      if (
+        slice === "servers" ||
+        slice === "storage" ||
+        slice === "databases" ||
+        slice === "applications"
+      ) {
         void fetchRun();
       }
     } catch (err: any) {
@@ -206,6 +213,7 @@ export default function RunDetailPage() {
   const serversIngested = run?.servers_ingested ?? 0;
   const storageIngested = run?.storage_ingested ?? 0;
   const databasesIngested = run?.databases_ingested ?? 0;
+  const applicationsIngested = run?.applications_ingested ?? 0;
 
   return (
     <div className="px-6 py-6 space-y-6">
@@ -295,6 +303,7 @@ export default function RunDetailPage() {
               serversIngested={serversIngested}
               storageIngested={storageIngested}
               databasesIngested={databasesIngested}
+              applicationsIngested={applicationsIngested}
               uploads={uploads}
               onFileChange={handleFileChange}
               onUpload={handleUpload}
@@ -391,6 +400,7 @@ function IngestionTab({
   serversIngested,
   storageIngested,
   databasesIngested,
+  applicationsIngested,
   uploads,
   onFileChange,
   onUpload,
@@ -398,6 +408,7 @@ function IngestionTab({
   serversIngested: number;
   storageIngested: number;
   databasesIngested: number;
+  applicationsIngested: number;
   uploads: Record<SliceKey, UploadState>;
   onFileChange: (
     slice: SliceKey
@@ -407,7 +418,7 @@ function IngestionTab({
   return (
     <div className="space-y-6">
       {/* Top summary cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <SummaryCard
           title="Servers ingested"
           value={serversIngested.toString()}
@@ -419,6 +430,10 @@ function IngestionTab({
         <SummaryCard
           title="Databases"
           value={databasesIngested.toString()}
+        />
+        <SummaryCard
+          title="Applications"
+          value={applicationsIngested.toString()}
         />
       </div>
 
@@ -457,6 +472,14 @@ function IngestionTab({
             state={uploads.databases}
             onFileChange={onFileChange("databases")}
             onUpload={onUpload("databases")}
+          />
+          <SliceUploadRow
+            label="Applications CSV"
+            description="Logical application inventory, ownership, and dependency context."
+            slice="applications"
+            state={uploads.applications}
+            onFileChange={onFileChange("applications")}
+            onUpload={onUpload("applications")}
           />
         </div>
       </div>
