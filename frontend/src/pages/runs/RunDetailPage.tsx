@@ -16,9 +16,9 @@ interface RunRecord {
   servers_ingested?: number;
   storage_ingested?: number;
   network_ingested?: number;
-  databases_ingested?: number; // Databases slice wiring
-  applications_ingested?: number; // Applications slice wiring
-  dependencies_ingested?: number; // ✅ Dependencies slice wiring
+  databases_ingested?: number;
+  applications_ingested?: number;
+  dependencies_ingested?: number;
 }
 
 type SliceKey = "servers" | "storage" | "databases" | "applications" | "dependencies";
@@ -28,6 +28,9 @@ interface UploadState {
   uploading: boolean;
   error?: string | null;
   okMessage?: string | null;
+
+  // last ingestion response payload (per slice)
+  result?: any;
 }
 
 const initialUploadState: UploadState = {
@@ -35,6 +38,7 @@ const initialUploadState: UploadState = {
   uploading: false,
   error: null,
   okMessage: null,
+  result: null,
 };
 
 export default function RunDetailPage() {
@@ -77,9 +81,7 @@ export default function RunDetailPage() {
       setError(null);
 
       const res = await fetch(`/v1/run_registry/${encodeURIComponent(runId)}`);
-      if (!res.ok) {
-        throw new Error(`Failed to load assessment (${res.status})`);
-      }
+      if (!res.ok) throw new Error(`Failed to load assessment (${res.status})`);
       const data: RunRecord = await res.json();
       setRun(data);
     } catch (err: any) {
@@ -98,9 +100,7 @@ export default function RunDetailPage() {
     (slice: SliceKey) =>
     (event: ChangeEvent<HTMLInputElement>) => {
       const file =
-        event.target.files && event.target.files[0]
-          ? event.target.files[0]
-          : undefined;
+        event.target.files && event.target.files[0] ? event.target.files[0] : undefined;
 
       setUploads((prev) => ({
         ...prev,
@@ -109,9 +109,52 @@ export default function RunDetailPage() {
           file,
           error: null,
           okMessage: null,
+          // keep prior result until next upload
         },
       }));
     };
+
+  const downloadTemplate = async (slice: SliceKey) => {
+    try {
+      const res = await fetch(`/v1/ingest/templates/${slice}/csv`);
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`Template download failed (${res.status}): ${text}`);
+      }
+
+      const blob = await res.blob();
+
+      let filename = `${slice}.template.csv`;
+      const cd = res.headers.get("content-disposition") || "";
+      const match = cd.match(/filename="?([^"]+)"?/i);
+      if (match?.[1]) filename = match[1];
+
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+
+      setUploads((prev) => ({
+        ...prev,
+        [slice]: {
+          ...prev[slice],
+          error: null,
+        },
+      }));
+    } catch (err: any) {
+      setUploads((prev) => ({
+        ...prev,
+        [slice]: {
+          ...prev[slice],
+          error: err?.message || "Failed to download template.",
+        },
+      }));
+    }
+  };
 
   const handleUpload = (slice: SliceKey) => async () => {
     if (!runId || !run) return;
@@ -120,10 +163,7 @@ export default function RunDetailPage() {
     if (!current.file) {
       setUploads((prev) => ({
         ...prev,
-        [slice]: {
-          ...prev[slice],
-          error: "Please choose a CSV file first.",
-        },
+        [slice]: { ...prev[slice], error: "Please choose a CSV file first." },
       }));
       return;
     }
@@ -142,20 +182,27 @@ export default function RunDetailPage() {
       const formData = new FormData();
       formData.append("file", current.file);
 
-      const res = await fetch(
-        `/v1/ingest/${slice}?run_id=${encodeURIComponent(run.id)}`,
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
+      const res = await fetch(`/v1/ingest/${slice}?run_id=${encodeURIComponent(run.id)}`, {
+        method: "POST",
+        body: formData,
+      });
 
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`Upload failed (${res.status}): ${text}`);
+      // Capture response body safely (text first, then JSON)
+      const rawText = await res.text();
+      let payload: any = {};
+      try {
+        payload = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        payload = { raw: rawText };
       }
 
-      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = payload?.detail || payload?.message || rawText || `HTTP ${res.status}`;
+        throw new Error(`Upload failed (${res.status}): ${msg}`);
+      }
+
+      // Many endpoints return { details: {...} } — prefer details but keep entire payload
+      const details = payload?.details ?? payload;
 
       setUploads((prev) => ({
         ...prev,
@@ -163,20 +210,12 @@ export default function RunDetailPage() {
           ...prev[slice],
           uploading: false,
           file: undefined,
-          okMessage: payload?.details?.message || "Upload completed successfully.",
+          okMessage: details?.message || "Upload completed successfully.",
+          result: details,
         },
       }));
 
-      // Refresh run so counters & tiles update for these slices
-      if (
-        slice === "servers" ||
-        slice === "storage" ||
-        slice === "databases" ||
-        slice === "applications" ||
-        slice === "dependencies"
-      ) {
-        void fetchRun();
-      }
+      void fetchRun();
     } catch (err: any) {
       setUploads((prev) => ({
         ...prev,
@@ -200,7 +239,6 @@ export default function RunDetailPage() {
 
   const statusBadgeClass = (() => {
     const status = (run?.state || "Not Started") as AssessmentStatus | string;
-
     switch (status) {
       case "In Progress":
         return "bg-blue-100 text-blue-800";
@@ -224,18 +262,12 @@ export default function RunDetailPage() {
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <button
-            onClick={goBack}
-            className="text-xs text-blue-600 hover:underline mb-1"
-          >
+          <button onClick={goBack} className="text-xs text-blue-600 hover:underline mb-1">
             ← Back to Assessments
           </button>
-          <h1 className="text-xl font-semibold text-gray-900">
-            {run?.name || "New assessment"}
-          </h1>
+          <h1 className="text-xl font-semibold text-gray-900">{run?.name || "New assessment"}</h1>
           <p className="text-sm text-gray-600">
-            Assessment ID:{" "}
-            <span className="font-mono">{run?.id || runId || "—"}</span>
+            Assessment ID: <span className="font-mono">{run?.id || runId || "—"}</span>
           </p>
         </div>
 
@@ -247,9 +279,7 @@ export default function RunDetailPage() {
               {run?.state || "Not Started"}
             </span>
           </div>
-          <p className="text-xs text-gray-500">
-            Created {formatDate(run?.created_at)}
-          </p>
+          <p className="text-xs text-gray-500">Created {formatDate(run?.created_at)}</p>
         </div>
       </div>
 
@@ -267,10 +297,7 @@ export default function RunDetailPage() {
           <SummaryCard title="Client / Source" value={run?.source || "Dashboard"} />
           <SummaryCard title="Environment" value="—" />
           <SummaryCard title="Status" value={run?.state || "Not Started"} />
-          <SummaryCard
-            title="Assessment activity"
-            value={`Created ${formatDate(run?.created_at)}`}
-          />
+          <SummaryCard title="Assessment activity" value={`Created ${formatDate(run?.created_at)}`} />
         </div>
       )}
 
@@ -295,7 +322,6 @@ export default function RunDetailPage() {
             </nav>
           </div>
 
-          {/* Tab content */}
           {activeTab === "overview" && <OverviewTab run={run} />}
 
           {activeTab === "ingestion" && (
@@ -308,6 +334,7 @@ export default function RunDetailPage() {
               uploads={uploads}
               onFileChange={handleFileChange}
               onUpload={handleUpload}
+              onDownloadTemplate={(slice) => void downloadTemplate(slice)}
             />
           )}
 
@@ -342,12 +369,9 @@ export default function RunDetailPage() {
 function OverviewTab({ run }: { run: RunRecord | null }) {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      {/* Left: Summary */}
       <div className="border border-gray-200 bg-white rounded-md shadow-sm p-4 space-y-3">
         <h2 className="text-sm font-medium text-gray-900">Assessment summary</h2>
-        <p className="text-xs text-gray-600">
-          High-level details including source, status, and creation time.
-        </p>
+        <p className="text-xs text-gray-600">High-level details including source, status, and creation time.</p>
 
         <dl className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
           <div>
@@ -367,19 +391,16 @@ function OverviewTab({ run }: { run: RunRecord | null }) {
 
           <div>
             <dt className="text-xs text-gray-500">Created</dt>
-            <dd className="text-gray-900">
-              {run ? new Date(run.created_at).toLocaleString() : "—"}
-            </dd>
+            <dd className="text-gray-900">{run ? new Date(run.created_at).toLocaleString() : "—"}</dd>
           </div>
         </dl>
       </div>
 
-      {/* Right: Placeholder for future portfolio / client info */}
       <div className="border border-gray-200 bg-white rounded-md shadow-sm p-4 space-y-3">
         <h2 className="text-sm font-medium text-gray-900">Portfolio context</h2>
         <p className="text-xs text-gray-600">
-          This section will eventually show how this assessment maps into your broader
-          client portfolio, workloads, and migration plans.
+          This section will eventually show how this assessment maps into your broader client portfolio, workloads,
+          and migration plans.
         </p>
         <div className="border border-dashed border-gray-300 rounded-md h-32 flex items-center justify-center text-xs text-gray-400">
           Coming soon
@@ -402,6 +423,7 @@ function IngestionTab({
   uploads,
   onFileChange,
   onUpload,
+  onDownloadTemplate,
 }: {
   serversIngested: number;
   storageIngested: number;
@@ -411,10 +433,10 @@ function IngestionTab({
   uploads: Record<SliceKey, UploadState>;
   onFileChange: (slice: SliceKey) => (event: ChangeEvent<HTMLInputElement>) => void;
   onUpload: (slice: SliceKey) => () => void;
+  onDownloadTemplate: (slice: SliceKey) => void;
 }) {
   return (
     <div className="space-y-6">
-      {/* Top summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
         <SummaryCard title="Servers ingested" value={serversIngested.toString()} />
         <SummaryCard title="Storage volumes" value={storageIngested.toString()} />
@@ -423,13 +445,10 @@ function IngestionTab({
         <SummaryCard title="Dependencies" value={dependenciesIngested.toString()} />
       </div>
 
-      {/* Ingestion overview & upload controls */}
       <div className="border border-gray-200 bg-white rounded-md shadow-sm p-4 space-y-4">
         <h3 className="text-sm font-medium text-gray-900">Ingestion overview</h3>
         <p className="text-xs text-gray-600">
-          Upload CSV data for each slice in this assessment. Servers are wired end-to-end today.
-          Storage volumes, databases, applications, and dependencies use the same ingestion pattern
-          and can be enhanced further as their v2 engines come online.
+          Upload CSV data for each slice in this assessment. Use Download template to ensure headers match guardrails.
         </p>
 
         <div className="space-y-3">
@@ -440,6 +459,7 @@ function IngestionTab({
             state={uploads.servers}
             onFileChange={onFileChange("servers")}
             onUpload={onUpload("servers")}
+            onDownloadTemplate={() => onDownloadTemplate("servers")}
           />
           <SliceUploadRow
             label="Storage volumes CSV"
@@ -448,6 +468,7 @@ function IngestionTab({
             state={uploads.storage}
             onFileChange={onFileChange("storage")}
             onUpload={onUpload("storage")}
+            onDownloadTemplate={() => onDownloadTemplate("storage")}
           />
           <SliceUploadRow
             label="Databases CSV"
@@ -456,6 +477,7 @@ function IngestionTab({
             state={uploads.databases}
             onFileChange={onFileChange("databases")}
             onUpload={onUpload("databases")}
+            onDownloadTemplate={() => onDownloadTemplate("databases")}
           />
           <SliceUploadRow
             label="Applications CSV"
@@ -464,6 +486,7 @@ function IngestionTab({
             state={uploads.applications}
             onFileChange={onFileChange("applications")}
             onUpload={onUpload("applications")}
+            onDownloadTemplate={() => onDownloadTemplate("applications")}
           />
           <SliceUploadRow
             label="Dependencies CSV"
@@ -472,20 +495,17 @@ function IngestionTab({
             state={uploads.dependencies}
             onFileChange={onFileChange("dependencies")}
             onUpload={onUpload("dependencies")}
+            onDownloadTemplate={() => onDownloadTemplate("dependencies")}
           />
         </div>
       </div>
 
-      {/* Charts placeholders (still mock / future wiring) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <ChartCard
           title="Ingestion status by resource type"
           description="As more slices are ingested, this chart will show coverage across servers, storage, databases, applications, and dependencies."
         />
-        <ChartCard
-          title="Utilization and trends"
-          description="Future view for CPU, memory, and storage utilization over time."
-        />
+        <ChartCard title="Utilization and trends" description="Future view for CPU, memory, and storage utilization over time." />
       </div>
     </div>
   );
@@ -504,6 +524,109 @@ function SummaryCard({ title, value }: { title: string; value: string }) {
   );
 }
 
+function extractList(val: any): string[] {
+  if (!val) return [];
+  if (Array.isArray(val)) return val.map((x) => String(x));
+  return [String(val)];
+}
+
+function computeSliceStatus(result: any): {
+  level: "blocked" | "warn" | "ok";
+  label: string;
+  summary?: string;
+} {
+  if (!result) return { level: "ok", label: "", summary: undefined };
+
+  const blockers = extractList(result?.blockers);
+
+  const guardrails = result?.guardrails;
+
+  const missingRequired =
+    extractList(guardrails?.missing_required).length > 0
+      ? extractList(guardrails?.missing_required)
+      : extractList(result?.missing_required_headers)
+          .concat(extractList(result?.missing_required))
+          .concat(extractList(result?.missing_required_fields));
+
+  const warnings =
+    extractList(guardrails?.warnings).length > 0
+      ? extractList(guardrails?.warnings)
+      : extractList(result?.warnings)
+          .concat(extractList(result?.linkage_warnings))
+          .concat(extractList(result?.warning_messages));
+
+  const processed =
+    typeof result?.rows_processed === "number"
+      ? result.rows_processed
+      : typeof result?.counts?.rows_processed === "number"
+        ? result.counts.rows_processed
+        : undefined;
+
+  const ok =
+    typeof result?.rows_successful === "number"
+      ? result.rows_successful
+      : typeof result?.counts?.rows_successful === "number"
+        ? result.counts.rows_successful
+        : undefined;
+
+  const failed =
+    typeof result?.rows_failed === "number"
+      ? result.rows_failed
+      : typeof result?.counts?.rows_failed === "number"
+        ? result.counts.rows_failed
+        : undefined;
+
+  // Determine blocked
+  const isBlocked =
+    blockers.length > 0 ||
+    (missingRequired.length > 0 && guardrails?.valid === false) ||
+    String(result?.status || "").toLowerCase() === "blocked";
+
+  if (isBlocked) {
+    const missingSummary =
+      missingRequired.length > 0 ? `Missing required: ${missingRequired.join(", ")}` : undefined;
+    return { level: "blocked", label: "Blocked", summary: missingSummary };
+  }
+
+  // Accepted with warnings
+  if (warnings.length > 0) {
+    const base =
+      processed !== undefined || ok !== undefined || failed !== undefined
+        ? `Processed ${processed ?? "—"} • OK ${ok ?? "—"} • Failed ${failed ?? "—"}`
+        : undefined;
+
+    const summary = base ? `${base} • Warnings ${warnings.length}` : `Warnings ${warnings.length}`;
+    return { level: "warn", label: "Accepted w/ warnings", summary };
+  }
+
+  // Accepted
+  const okSummary =
+    processed !== undefined || ok !== undefined || failed !== undefined
+      ? `Processed ${processed ?? "—"} • OK ${ok ?? "—"} • Failed ${failed ?? "—"}`
+      : undefined;
+
+  return { level: "ok", label: "Accepted", summary: okSummary };
+}
+
+function StatusPill({ level, text }: { level: "blocked" | "warn" | "ok"; text: string }) {
+  const cls =
+    level === "blocked"
+      ? "bg-red-50 text-red-700 border border-red-100"
+      : level === "warn"
+        ? "bg-amber-50 text-amber-800 border border-amber-100"
+        : "bg-emerald-50 text-emerald-700 border border-emerald-100";
+
+  const dot =
+    level === "blocked" ? "bg-red-500" : level === "warn" ? "bg-amber-500" : "bg-emerald-500";
+
+  return (
+    <span className={`inline-flex items-center gap-2 px-2 py-0.5 rounded-full text-[11px] font-medium ${cls}`}>
+      <span className={`h-2 w-2 rounded-full ${dot}`} />
+      {text}
+    </span>
+  );
+}
+
 function SliceUploadRow({
   label,
   description,
@@ -511,6 +634,7 @@ function SliceUploadRow({
   state,
   onFileChange,
   onUpload,
+  onDownloadTemplate,
 }: {
   label: string;
   description: string;
@@ -518,21 +642,33 @@ function SliceUploadRow({
   state: UploadState;
   onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onUpload: () => void;
+  onDownloadTemplate: () => void;
 }) {
+  const s = computeSliceStatus(state.result);
+
   return (
     <div className="border border-gray-100 rounded-md px-3 py-3">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium text-gray-900">{label}</p>
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium text-gray-900">{label}</p>
+            {s.label ? <StatusPill level={s.level} text={s.label} /> : null}
+          </div>
+
           <p className="text-xs text-gray-600">{description}</p>
+
+          {s.summary ? <p className="text-xs text-gray-700">{s.summary}</p> : null}
         </div>
+
         <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-          <input
-            type="file"
-            accept=".csv"
-            onChange={onFileChange}
-            className="block text-xs text-gray-700"
-          />
+          <input type="file" accept=".csv" onChange={onFileChange} className="block text-xs text-gray-700" />
+          <button
+            type="button"
+            onClick={onDownloadTemplate}
+            className="inline-flex justify-center items-center px-3 py-1.5 rounded-md text-xs font-medium text-gray-700 bg-white border border-gray-200 hover:bg-gray-50"
+          >
+            Download template
+          </button>
           <button
             type="button"
             onClick={onUpload}
@@ -543,8 +679,134 @@ function SliceUploadRow({
           </button>
         </div>
       </div>
+
       {state.error && <p className="mt-1 text-xs text-red-600">{state.error}</p>}
       {state.okMessage && <p className="mt-1 text-xs text-green-600">{state.okMessage}</p>}
+
+      {/* Ingestion Result Visibility */}
+      {state.result && <IngestionResultPanel result={state.result} />}
+    </div>
+  );
+}
+
+function IngestionResultPanel({ result }: { result: any }) {
+  // Extract common fields if present (defensive; never breaks if shape changes)
+  const rowsProcessed = result?.rows_processed ?? result?.counts?.rows_processed;
+  const rowsSuccessful = result?.rows_successful ?? result?.counts?.rows_successful;
+  const rowsFailed = result?.rows_failed ?? result?.counts?.rows_failed;
+
+  const guardrails = result?.guardrails;
+
+  const missingRequired =
+    extractList(guardrails?.missing_required).length > 0
+      ? extractList(guardrails?.missing_required)
+      : extractList(result?.missing_required_headers)
+          .concat(extractList(result?.missing_required))
+          .concat(extractList(result?.missing_required_fields));
+
+  const unknownColumns =
+    extractList(guardrails?.unknown_columns).length > 0
+      ? extractList(guardrails?.unknown_columns)
+      : extractList(result?.unknown_columns).concat(extractList(result?.unknown_headers));
+
+  const aliasMappings =
+    guardrails?.used_aliases && Object.keys(guardrails.used_aliases).length > 0
+      ? guardrails.used_aliases
+      : result?.alias_mappings ?? result?.aliases_used ?? result?.header_aliases_used;
+
+  const warnings =
+    extractList(guardrails?.warnings).length > 0
+      ? extractList(guardrails?.warnings)
+      : extractList(result?.warnings)
+          .concat(extractList(result?.linkage_warnings))
+          .concat(extractList(result?.warning_messages));
+
+  const hasAnySummary =
+    rowsProcessed !== undefined ||
+    rowsSuccessful !== undefined ||
+    rowsFailed !== undefined ||
+    missingRequired.length > 0 ||
+    unknownColumns.length > 0 ||
+    aliasMappings ||
+    warnings.length > 0;
+
+  const json = (() => {
+    try {
+      return JSON.stringify(result, null, 2);
+    } catch {
+      return String(result);
+    }
+  })();
+
+  return (
+    <div className="mt-3 border border-gray-200 bg-gray-50 rounded-md p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium text-gray-800">Ingestion details</p>
+        <span className="text-[11px] text-gray-600">
+          {rowsProcessed !== undefined ? `Processed ${rowsProcessed}` : "Details captured"}
+          {rowsSuccessful !== undefined ? ` • OK ${rowsSuccessful}` : ""}
+          {rowsFailed !== undefined ? ` • Failed ${rowsFailed}` : ""}
+        </span>
+      </div>
+
+      {hasAnySummary && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-gray-700">
+          {missingRequired.length > 0 && (
+            <div>
+              <p className="font-medium text-gray-800">Missing required</p>
+              <ul className="list-disc ml-4">
+                {missingRequired.slice(0, 20).map((x: any, i: number) => (
+                  <li key={i}>{String(x)}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {unknownColumns.length > 0 && (
+            <div>
+              <p className="font-medium text-gray-800">Unknown columns</p>
+              <ul className="list-disc ml-4">
+                {unknownColumns.slice(0, 20).map((x: any, i: number) => (
+                  <li key={i}>{String(x)}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {aliasMappings && (
+            <div className="md:col-span-2">
+              <p className="font-medium text-gray-800">Alias mappings used</p>
+              <pre className="text-[11px] bg-white border border-gray-200 rounded p-2 overflow-auto max-h-40">
+                {(() => {
+                  try {
+                    return JSON.stringify(aliasMappings, null, 2);
+                  } catch {
+                    return String(aliasMappings);
+                  }
+                })()}
+              </pre>
+            </div>
+          )}
+
+          {warnings.length > 0 && (
+            <div className="md:col-span-2">
+              <p className="font-medium text-gray-800">Warnings</p>
+              <ul className="list-disc ml-4">
+                {warnings.slice(0, 25).map((x: any, i: number) => (
+                  <li key={i}>{String(x)}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      <details className="mt-1">
+        <summary className="cursor-pointer text-xs text-blue-700 hover:underline">Show raw JSON</summary>
+        <pre className="text-[11px] bg-white border border-gray-200 rounded p-2 overflow-auto max-h-72 mt-2">
+          {json}
+        </pre>
+      </details>
     </div>
   );
 }
@@ -564,8 +826,8 @@ function ChartCard({ title, description }: { title: string; description: string 
 function PlaceholderTab({ title }: { title: string }) {
   return (
     <div className="border border-gray-200 bg-white rounded-md shadow-sm p-6 text-sm text-gray-600">
-      {title} workspace wiring is planned for the MVP. The ingestion and run registry flows you just
-      validated will feed this section.
+      {title} workspace wiring is planned for the MVP. The ingestion and run registry flows you just validated will feed
+      this section.
     </div>
   );
 }
