@@ -1,4 +1,4 @@
-import React, { ChangeEvent, useEffect, useState } from "react";
+import React, { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 type TabId = "overview" | "ingestion" | "insights" | "diagrams" | "cost" | "reports";
@@ -39,6 +39,37 @@ const initialUploadState: UploadState = {
   error: null,
   okMessage: null,
   result: null,
+};
+
+const SLICE_META: Record<
+  SliceKey,
+  { label: string; description: string; templatePath: string }
+> = {
+  servers: {
+    label: "Servers CSV",
+    description: "Core compute inventory. Each row represents a server or VM.",
+    templatePath: "/v1/ingest/templates/servers/csv",
+  },
+  storage: {
+    label: "Storage volumes CSV",
+    description: "Block / file storage objects, LUNs, and volumes.",
+    templatePath: "/v1/ingest/templates/storage/csv",
+  },
+  databases: {
+    label: "Databases CSV",
+    description: "Database servers and logical databases / schemas.",
+    templatePath: "/v1/ingest/templates/databases/csv",
+  },
+  applications: {
+    label: "Applications CSV",
+    description: "Logical application inventory, ownership, and dependency context.",
+    templatePath: "/v1/ingest/templates/applications/csv",
+  },
+  dependencies: {
+    label: "Dependencies CSV",
+    description: "Application-to-application dependency edges (app_id → depends_on_app_id).",
+    templatePath: "/v1/ingest/templates/dependencies/csv",
+  },
 };
 
 export default function RunDetailPage() {
@@ -109,14 +140,13 @@ export default function RunDetailPage() {
           file,
           error: null,
           okMessage: null,
-          // keep prior result until next upload
         },
       }));
     };
 
   const downloadTemplate = async (slice: SliceKey) => {
     try {
-      const res = await fetch(`/v1/ingest/templates/${slice}/csv`);
+      const res = await fetch(SLICE_META[slice].templatePath);
       if (!res.ok) {
         const text = await res.text().catch(() => "");
         throw new Error(`Template download failed (${res.status}): ${text}`);
@@ -187,7 +217,6 @@ export default function RunDetailPage() {
         body: formData,
       });
 
-      // Capture response body safely (text first, then JSON)
       const rawText = await res.text();
       let payload: any = {};
       try {
@@ -201,7 +230,6 @@ export default function RunDetailPage() {
         throw new Error(`Upload failed (${res.status}): ${msg}`);
       }
 
-      // Many endpoints return { details: {...} } — prefer details but keep entire payload
       const details = payload?.details ?? payload;
 
       setUploads((prev) => ({
@@ -435,8 +463,11 @@ function IngestionTab({
   onUpload: (slice: SliceKey) => () => void;
   onDownloadTemplate: (slice: SliceKey) => void;
 }) {
+  const coverage = useMemo(() => computeCoverage(uploads), [uploads]);
+
   return (
     <div className="space-y-6">
+      {/* Top summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
         <SummaryCard title="Servers ingested" value={serversIngested.toString()} />
         <SummaryCard title="Storage volumes" value={storageIngested.toString()} />
@@ -445,6 +476,13 @@ function IngestionTab({
         <SummaryCard title="Dependencies" value={dependenciesIngested.toString()} />
       </div>
 
+      {/* Phase C2: Readiness + Coverage */}
+      <ReadinessPanel coverage={coverage} />
+
+      {/* Phase C2: Cross-slice signals */}
+      <CrossSliceSignals uploads={uploads} />
+
+      {/* Upload controls */}
       <div className="border border-gray-200 bg-white rounded-md shadow-sm p-4 space-y-4">
         <h3 className="text-sm font-medium text-gray-900">Ingestion overview</h3>
         <p className="text-xs text-gray-600">
@@ -452,54 +490,27 @@ function IngestionTab({
         </p>
 
         <div className="space-y-3">
-          <SliceUploadRow
-            label="Servers CSV"
-            description="Core compute inventory. Each row represents a server or VM."
-            slice="servers"
-            state={uploads.servers}
-            onFileChange={onFileChange("servers")}
-            onUpload={onUpload("servers")}
-            onDownloadTemplate={() => onDownloadTemplate("servers")}
-          />
-          <SliceUploadRow
-            label="Storage volumes CSV"
-            description="Block / file storage objects, LUNs, and volumes."
-            slice="storage"
-            state={uploads.storage}
-            onFileChange={onFileChange("storage")}
-            onUpload={onUpload("storage")}
-            onDownloadTemplate={() => onDownloadTemplate("storage")}
-          />
-          <SliceUploadRow
-            label="Databases CSV"
-            description="Database servers and logical databases / schemas."
-            slice="databases"
-            state={uploads.databases}
-            onFileChange={onFileChange("databases")}
-            onUpload={onUpload("databases")}
-            onDownloadTemplate={() => onDownloadTemplate("databases")}
-          />
-          <SliceUploadRow
-            label="Applications CSV"
-            description="Logical application inventory, ownership, and dependency context."
-            slice="applications"
-            state={uploads.applications}
-            onFileChange={onFileChange("applications")}
-            onUpload={onUpload("applications")}
-            onDownloadTemplate={() => onDownloadTemplate("applications")}
-          />
-          <SliceUploadRow
-            label="Dependencies CSV"
-            description="Application-to-application dependency edges (app_id → depends_on_app_id)."
-            slice="dependencies"
-            state={uploads.dependencies}
-            onFileChange={onFileChange("dependencies")}
-            onUpload={onUpload("dependencies")}
-            onDownloadTemplate={() => onDownloadTemplate("dependencies")}
-          />
+          {(Object.keys(SLICE_META) as SliceKey[]).map((slice) => (
+            <SliceUploadRow
+              key={slice}
+              label={SLICE_META[slice].label}
+              description={SLICE_META[slice].description}
+              slice={slice}
+              state={uploads[slice]}
+              onFileChange={onFileChange(slice)}
+              onUpload={onUpload(slice)}
+              onDownloadTemplate={() => onDownloadTemplate(slice)}
+            />
+          ))}
+        </div>
+
+        <div className="text-[11px] text-gray-500">
+          Note: CloudReadyAI’s full ingestion model includes additional slices (network, business metadata, OS/software,
+          utilization, licensing). These will surface here as we bring them online.
         </div>
       </div>
 
+      {/* Charts placeholders */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <ChartCard
           title="Ingestion status by resource type"
@@ -534,11 +545,15 @@ function computeSliceStatus(result: any): {
   level: "blocked" | "warn" | "ok";
   label: string;
   summary?: string;
+  warningsCount?: number;
+  missingRequired?: string[];
+  processed?: number;
+  ok?: number;
+  failed?: number;
 } {
   if (!result) return { level: "ok", label: "", summary: undefined };
 
   const blockers = extractList(result?.blockers);
-
   const guardrails = result?.guardrails;
 
   const missingRequired =
@@ -576,7 +591,6 @@ function computeSliceStatus(result: any): {
         ? result.counts.rows_failed
         : undefined;
 
-  // Determine blocked
   const isBlocked =
     blockers.length > 0 ||
     (missingRequired.length > 0 && guardrails?.valid === false) ||
@@ -585,10 +599,18 @@ function computeSliceStatus(result: any): {
   if (isBlocked) {
     const missingSummary =
       missingRequired.length > 0 ? `Missing required: ${missingRequired.join(", ")}` : undefined;
-    return { level: "blocked", label: "Blocked", summary: missingSummary };
+    return {
+      level: "blocked",
+      label: "Blocked",
+      summary: missingSummary,
+      warningsCount: warnings.length || undefined,
+      missingRequired,
+      processed,
+      ok,
+      failed,
+    };
   }
 
-  // Accepted with warnings
   if (warnings.length > 0) {
     const base =
       processed !== undefined || ok !== undefined || failed !== undefined
@@ -596,16 +618,33 @@ function computeSliceStatus(result: any): {
         : undefined;
 
     const summary = base ? `${base} • Warnings ${warnings.length}` : `Warnings ${warnings.length}`;
-    return { level: "warn", label: "Accepted w/ warnings", summary };
+    return {
+      level: "warn",
+      label: "Accepted w/ warnings",
+      summary,
+      warningsCount: warnings.length,
+      missingRequired,
+      processed,
+      ok,
+      failed,
+    };
   }
 
-  // Accepted
   const okSummary =
     processed !== undefined || ok !== undefined || failed !== undefined
       ? `Processed ${processed ?? "—"} • OK ${ok ?? "—"} • Failed ${failed ?? "—"}`
       : undefined;
 
-  return { level: "ok", label: "Accepted", summary: okSummary };
+  return {
+    level: "ok",
+    label: "Accepted",
+    summary: okSummary,
+    warningsCount: 0,
+    missingRequired,
+    processed,
+    ok,
+    failed,
+  };
 }
 
 function StatusPill({ level, text }: { level: "blocked" | "warn" | "ok"; text: string }) {
@@ -626,6 +665,235 @@ function StatusPill({ level, text }: { level: "blocked" | "warn" | "ok"; text: s
     </span>
   );
 }
+
+/* ------------------------------
+   Phase C2: Coverage + Readiness
+------------------------------ */
+
+type CoverageSummary = {
+  totalSlices: number;
+  accepted: number;
+  acceptedWithWarnings: number;
+  blocked: number;
+  notStarted: number;
+  readyForInsights: boolean;
+  nextActions: string[];
+};
+
+function computeCoverage(uploads: Record<SliceKey, UploadState>): CoverageSummary {
+  const keys = Object.keys(uploads) as SliceKey[];
+  let accepted = 0;
+  let acceptedWithWarnings = 0;
+  let blocked = 0;
+  let notStarted = 0;
+
+  const nextActions: string[] = [];
+
+  for (const k of keys) {
+    const r = uploads[k]?.result;
+    if (!r) {
+      notStarted += 1;
+      nextActions.push(`Upload ${SLICE_META[k].label} (not started).`);
+      continue;
+    }
+
+    const s = computeSliceStatus(r);
+    if (s.level === "blocked") {
+      blocked += 1;
+      if (s.missingRequired && s.missingRequired.length > 0) {
+        nextActions.push(
+          `Fix ${SLICE_META[k].label}: missing required (${s.missingRequired.join(", ")}).`
+        );
+      } else {
+        nextActions.push(`Fix ${SLICE_META[k].label}: blocked by guardrails (see details).`);
+      }
+    } else if (s.level === "warn") {
+      acceptedWithWarnings += 1;
+      nextActions.push(`Review warnings for ${SLICE_META[k].label}.`);
+    } else {
+      accepted += 1;
+    }
+  }
+
+  // Heuristic readiness:
+  // - not ready if any blocked
+  // - ready if at least Servers + one of (Storage/Databases/Apps/Deps) accepted/warn and none blocked
+  const serversResult = uploads.servers?.result;
+  const serversOk =
+    serversResult && computeSliceStatus(serversResult).level !== "blocked";
+
+  const anyOtherOk = (["storage", "databases", "applications", "dependencies"] as SliceKey[]).some(
+    (k) => uploads[k]?.result && computeSliceStatus(uploads[k].result).level !== "blocked"
+  );
+
+  const readyForInsights = blocked === 0 && !!serversOk && anyOtherOk;
+
+  return {
+    totalSlices: keys.length,
+    accepted,
+    acceptedWithWarnings,
+    blocked,
+    notStarted,
+    readyForInsights,
+    nextActions: nextActions.slice(0, 6),
+  };
+}
+
+function ReadinessPanel({ coverage }: { coverage: CoverageSummary }) {
+  const bannerClass = coverage.readyForInsights
+    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+    : "border-amber-200 bg-amber-50 text-amber-900";
+
+  const bannerTitle = coverage.readyForInsights
+    ? "Assessment is ready for Insights and Diagrams (based on ingestion coverage)."
+    : "Assessment is not ready for Insights yet. Resolve blocked slices and increase coverage.";
+
+  return (
+    <div className="space-y-3">
+      <div className={`border rounded-md px-4 py-3 text-sm ${bannerClass}`}>
+        <div className="font-medium">{bannerTitle}</div>
+        <div className="text-xs mt-1">
+          Readiness gate is heuristic for MVP demos: no blocked slices, Servers present, plus at least one other slice.
+        </div>
+      </div>
+
+      <div className="border border-gray-200 bg-white rounded-md shadow-sm p-4">
+        <div className="flex items-start justify-between gap-6">
+          <div>
+            <h3 className="text-sm font-medium text-gray-900">Ingestion coverage</h3>
+            <p className="text-xs text-gray-600">
+              Snapshot across the enabled MVP slices on this assessment.
+            </p>
+          </div>
+
+          <div className="text-right">
+            <div className="text-sm font-semibold text-gray-900">
+              {coverage.totalSlices - coverage.notStarted}/{coverage.totalSlices} slices started
+            </div>
+            <div className="text-xs text-gray-600">
+              Accepted {coverage.accepted} • Warnings {coverage.acceptedWithWarnings} • Blocked{" "}
+              {coverage.blocked} • Not started {coverage.notStarted}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+          <MiniStat label="Accepted" value={String(coverage.accepted)} tone="ok" />
+          <MiniStat label="Warnings" value={String(coverage.acceptedWithWarnings)} tone="warn" />
+          <MiniStat label="Blocked" value={String(coverage.blocked)} tone="bad" />
+          <MiniStat label="Not started" value={String(coverage.notStarted)} tone="muted" />
+        </div>
+
+        <div className="mt-4">
+          <h4 className="text-xs font-semibold text-gray-900 uppercase tracking-wide">
+            Next best actions
+          </h4>
+          <ul className="mt-2 list-disc ml-5 text-xs text-gray-700 space-y-1">
+            {coverage.nextActions.length === 0 ? (
+              <li>Great shape — proceed to Insights, Diagrams, and Cost Modeling.</li>
+            ) : (
+              coverage.nextActions.map((x, i) => <li key={i}>{x}</li>)
+            )}
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MiniStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "ok" | "warn" | "bad" | "muted";
+}) {
+  const cls =
+    tone === "ok"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+      : tone === "warn"
+        ? "border-amber-200 bg-amber-50 text-amber-900"
+        : tone === "bad"
+          ? "border-red-200 bg-red-50 text-red-800"
+          : "border-gray-200 bg-gray-50 text-gray-700";
+
+  return (
+    <div className={`border rounded-md px-3 py-2 ${cls}`}>
+      <div className="text-[11px] uppercase tracking-wide font-medium">{label}</div>
+      <div className="text-sm font-semibold">{value}</div>
+    </div>
+  );
+}
+
+/* ------------------------------
+   Phase C2: Cross-slice signals
+------------------------------ */
+
+function CrossSliceSignals({ uploads }: { uploads: Record<SliceKey, UploadState> }) {
+  // Gather warnings across slices (as a "cross-slice checks" area)
+  const items = useMemo(() => {
+    const out: { slice: SliceKey; text: string }[] = [];
+    (Object.keys(uploads) as SliceKey[]).forEach((k) => {
+      const r = uploads[k]?.result;
+      if (!r) return;
+
+      const guardWarnings = extractList(r?.guardrails?.warnings);
+      const topWarnings = extractList(r?.warnings)
+        .concat(extractList(r?.linkage_warnings))
+        .concat(extractList(r?.warning_messages));
+
+      const all = (guardWarnings.length > 0 ? guardWarnings : []).concat(topWarnings);
+
+      // filter duplicates / empties
+      const uniq = Array.from(new Set(all.map((x) => String(x).trim()).filter(Boolean)));
+
+      uniq.slice(0, 6).forEach((w) => out.push({ slice: k, text: w }));
+    });
+    return out.slice(0, 12);
+  }, [uploads]);
+
+  if (items.length === 0) {
+    return (
+      <div className="border border-gray-200 bg-white rounded-md shadow-sm p-4">
+        <h3 className="text-sm font-medium text-gray-900">Cross-slice checks</h3>
+        <p className="text-xs text-gray-600 mt-1">
+          As slices are ingested, CloudReadyAI will surface cross-slice alignment issues here.
+        </p>
+        <div className="mt-3 text-xs text-gray-500">No cross-slice warnings detected yet.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border border-gray-200 bg-white rounded-md shadow-sm p-4">
+      <div className="flex items-start justify-between gap-6">
+        <div>
+          <h3 className="text-sm font-medium text-gray-900">Cross-slice checks</h3>
+          <p className="text-xs text-gray-600 mt-1">
+            These warnings can indicate ordering issues (e.g., Storage before Servers) or data linkage gaps.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-3 space-y-2">
+        {items.map((it, idx) => (
+          <div key={idx} className="border border-amber-200 bg-amber-50 rounded-md px-3 py-2">
+            <div className="text-[11px] font-semibold text-amber-900 uppercase tracking-wide">
+              {SLICE_META[it.slice].label}
+            </div>
+            <div className="text-xs text-amber-900">{it.text}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------
+   Slice Upload Row + Results Panel
+------------------------------ */
 
 function SliceUploadRow({
   label,
@@ -661,7 +929,12 @@ function SliceUploadRow({
         </div>
 
         <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-          <input type="file" accept=".csv" onChange={onFileChange} className="block text-xs text-gray-700" />
+          <input
+            type="file"
+            accept=".csv"
+            onChange={onFileChange}
+            className="block text-xs text-gray-700"
+          />
           <button
             type="button"
             onClick={onDownloadTemplate}
@@ -683,14 +956,12 @@ function SliceUploadRow({
       {state.error && <p className="mt-1 text-xs text-red-600">{state.error}</p>}
       {state.okMessage && <p className="mt-1 text-xs text-green-600">{state.okMessage}</p>}
 
-      {/* Ingestion Result Visibility */}
       {state.result && <IngestionResultPanel result={state.result} />}
     </div>
   );
 }
 
 function IngestionResultPanel({ result }: { result: any }) {
-  // Extract common fields if present (defensive; never breaks if shape changes)
   const rowsProcessed = result?.rows_processed ?? result?.counts?.rows_processed;
   const rowsSuccessful = result?.rows_successful ?? result?.counts?.rows_successful;
   const rowsFailed = result?.rows_failed ?? result?.counts?.rows_failed;
@@ -810,6 +1081,10 @@ function IngestionResultPanel({ result }: { result: any }) {
     </div>
   );
 }
+
+/* ------------------------------
+   Misc
+------------------------------ */
 
 function ChartCard({ title, description }: { title: string; description: string }) {
   return (
