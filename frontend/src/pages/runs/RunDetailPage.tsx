@@ -1,9 +1,10 @@
-import React, { ChangeEvent, useEffect, useMemo, useState } from "react";
+import React, { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import ResultsExplorerModal from "../../components/ResultsExplorerModal";
 
 type TabId = "overview" | "ingestion" | "insights" | "diagrams" | "cost" | "reports";
-
 type AssessmentStatus = "Not Started" | "In Progress" | "Completed" | "Error";
+type SliceKey = "servers" | "storage" | "databases" | "applications" | "dependencies";
 
 interface RunRecord {
   id: string;
@@ -12,7 +13,6 @@ interface RunRecord {
   state: AssessmentStatus | string;
   created_at: string;
 
-  // Counters from run registry
   servers_ingested?: number;
   storage_ingested?: number;
   network_ingested?: number;
@@ -21,16 +21,12 @@ interface RunRecord {
   dependencies_ingested?: number;
 }
 
-type SliceKey = "servers" | "storage" | "databases" | "applications" | "dependencies";
-
 interface UploadState {
   file?: File;
   uploading: boolean;
   error?: string | null;
   okMessage?: string | null;
-
-  // last ingestion response payload (per slice)
-  result?: any;
+  result?: any; // last ingestion response payload
 }
 
 const initialUploadState: UploadState = {
@@ -41,10 +37,7 @@ const initialUploadState: UploadState = {
   result: null,
 };
 
-const SLICE_META: Record<
-  SliceKey,
-  { label: string; description: string; templatePath: string }
-> = {
+const SLICE_META: Record<SliceKey, { label: string; description: string; templatePath: string }> = {
   servers: {
     label: "Servers CSV",
     description: "Core compute inventory. Each row represents a server or VM.",
@@ -89,6 +82,11 @@ export default function RunDetailPage() {
     dependencies: { ...initialUploadState },
   });
 
+  // Results Explorer modal
+  const [resultsModalOpen, setResultsModalOpen] = useState(false);
+  const [resultsModalSlice, setResultsModalSlice] = useState<SliceKey>("servers");
+  const [resultsModalRunId, setResultsModalRunId] = useState<string>("");
+
   const tabs: { id: TabId; label: string }[] = [
     { id: "overview", label: "Overview" },
     { id: "ingestion", label: "Ingestion" },
@@ -115,6 +113,9 @@ export default function RunDetailPage() {
       if (!res.ok) throw new Error(`Failed to load assessment (${res.status})`);
       const data: RunRecord = await res.json();
       setRun(data);
+
+      // keep modal run_id aligned if user switches runs
+      setResultsModalRunId(data.id);
     } catch (err: any) {
       setError(err?.message || "Failed to load assessment details.");
     } finally {
@@ -126,23 +127,6 @@ export default function RunDetailPage() {
     void fetchRun();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId]);
-
-  const handleFileChange =
-    (slice: SliceKey) =>
-    (event: ChangeEvent<HTMLInputElement>) => {
-      const file =
-        event.target.files && event.target.files[0] ? event.target.files[0] : undefined;
-
-      setUploads((prev) => ({
-        ...prev,
-        [slice]: {
-          ...prev[slice],
-          file,
-          error: null,
-          okMessage: null,
-        },
-      }));
-    };
 
   const downloadTemplate = async (slice: SliceKey) => {
     try {
@@ -271,7 +255,7 @@ export default function RunDetailPage() {
       case "In Progress":
         return "bg-blue-100 text-blue-800";
       case "Completed":
-        return "bg-green-100 text-green-800";
+        return "bg-emerald-100 text-emerald-800";
       case "Error":
         return "bg-red-100 text-red-800";
       default:
@@ -287,6 +271,14 @@ export default function RunDetailPage() {
 
   return (
     <div className="px-6 py-6 space-y-6">
+      {/* Results Explorer Modal */}
+      <ResultsExplorerModal
+        open={resultsModalOpen}
+        onClose={() => setResultsModalOpen(false)}
+        runId={resultsModalRunId || run?.id || runId || ""}
+        slice={resultsModalSlice}
+      />
+
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
@@ -301,9 +293,7 @@ export default function RunDetailPage() {
 
         <div className="text-right space-y-1">
           <div>
-            <span
-              className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${statusBadgeClass}`}
-            >
+            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${statusBadgeClass}`}>
               {run?.state || "Not Started"}
             </span>
           </div>
@@ -311,12 +301,9 @@ export default function RunDetailPage() {
         </div>
       </div>
 
-      {/* Loading / error */}
       {loading && <div className="text-sm text-gray-500">Loading assessment...</div>}
       {!loading && error && (
-        <div className="border border-red-200 bg-red-50 text-red-700 text-sm px-3 py-2 rounded">
-          {error}
-        </div>
+        <div className="border border-red-200 bg-red-50 text-red-700 text-sm px-3 py-2 rounded">{error}</div>
       )}
 
       {/* Top summary cards */}
@@ -354,15 +341,21 @@ export default function RunDetailPage() {
 
           {activeTab === "ingestion" && (
             <IngestionTab
+              run={run}
               serversIngested={serversIngested}
               storageIngested={storageIngested}
               databasesIngested={databasesIngested}
               applicationsIngested={applicationsIngested}
               dependenciesIngested={dependenciesIngested}
               uploads={uploads}
-              onFileChange={handleFileChange}
+              setUploads={setUploads}
               onUpload={handleUpload}
               onDownloadTemplate={(slice) => void downloadTemplate(slice)}
+              onViewRecords={(slice) => {
+                setResultsModalSlice(slice);
+                setResultsModalRunId(run?.id || runId || "");
+                setResultsModalOpen(true);
+              }}
             />
           )}
 
@@ -443,25 +436,29 @@ function OverviewTab({ run }: { run: RunRecord | null }) {
 ------------------------------ */
 
 function IngestionTab({
+  run,
   serversIngested,
   storageIngested,
   databasesIngested,
   applicationsIngested,
   dependenciesIngested,
   uploads,
-  onFileChange,
+  setUploads,
   onUpload,
   onDownloadTemplate,
+  onViewRecords,
 }: {
+  run: RunRecord | null;
   serversIngested: number;
   storageIngested: number;
   databasesIngested: number;
   applicationsIngested: number;
   dependenciesIngested: number;
   uploads: Record<SliceKey, UploadState>;
-  onFileChange: (slice: SliceKey) => (event: ChangeEvent<HTMLInputElement>) => void;
+  setUploads: React.Dispatch<React.SetStateAction<Record<SliceKey, UploadState>>>;
   onUpload: (slice: SliceKey) => () => void;
   onDownloadTemplate: (slice: SliceKey) => void;
+  onViewRecords: (slice: SliceKey) => void;
 }) {
   const coverage = useMemo(() => computeCoverage(uploads), [uploads]);
 
@@ -476,10 +473,10 @@ function IngestionTab({
         <SummaryCard title="Dependencies" value={dependenciesIngested.toString()} />
       </div>
 
-      {/* Phase C2: Readiness + Coverage */}
-      <ReadinessPanel coverage={coverage} />
+      {/* Readiness gate checklist style */}
+      <ReadinessChecklist coverage={coverage} />
 
-      {/* Phase C2: Cross-slice signals */}
+      {/* Cross-slice signals */}
       <CrossSliceSignals uploads={uploads} />
 
       {/* Upload controls */}
@@ -493,13 +490,15 @@ function IngestionTab({
           {(Object.keys(SLICE_META) as SliceKey[]).map((slice) => (
             <SliceUploadRow
               key={slice}
+              slice={slice}
               label={SLICE_META[slice].label}
               description={SLICE_META[slice].description}
-              slice={slice}
               state={uploads[slice]}
-              onFileChange={onFileChange(slice)}
+              ingestedCount={getIngestedCountFromRun(run, slice)}
+              setUploads={setUploads}
               onUpload={onUpload(slice)}
               onDownloadTemplate={() => onDownloadTemplate(slice)}
+              onViewRecords={() => onViewRecords(slice)}
             />
           ))}
         </div>
@@ -510,13 +509,18 @@ function IngestionTab({
         </div>
       </div>
 
-      {/* Charts placeholders */}
+      {/* Charts (locked until readiness met) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <ChartCard
+        <ChartCardLocked
           title="Ingestion status by resource type"
-          description="As more slices are ingested, this chart will show coverage across servers, storage, databases, applications, and dependencies."
+          description="Coverage visualization unlocks once ingestion readiness is met."
+          locked={!coverage.readyForInsights}
         />
-        <ChartCard title="Utilization and trends" description="Future view for CPU, memory, and storage utilization over time." />
+        <ChartCardLocked
+          title="Utilization and trends"
+          description="Utilization charts unlock once utilization metrics are ingested and readiness is met."
+          locked={!coverage.readyForInsights}
+        />
       </div>
     </div>
   );
@@ -597,8 +601,7 @@ function computeSliceStatus(result: any): {
     String(result?.status || "").toLowerCase() === "blocked";
 
   if (isBlocked) {
-    const missingSummary =
-      missingRequired.length > 0 ? `Missing required: ${missingRequired.join(", ")}` : undefined;
+    const missingSummary = missingRequired.length > 0 ? `Missing required: ${missingRequired.join(", ")}` : undefined;
     return {
       level: "blocked",
       label: "Blocked",
@@ -655,8 +658,7 @@ function StatusPill({ level, text }: { level: "blocked" | "warn" | "ok"; text: s
         ? "bg-amber-50 text-amber-800 border border-amber-100"
         : "bg-emerald-50 text-emerald-700 border border-emerald-100";
 
-  const dot =
-    level === "blocked" ? "bg-red-500" : level === "warn" ? "bg-amber-500" : "bg-emerald-500";
+  const dot = level === "blocked" ? "bg-red-500" : level === "warn" ? "bg-amber-500" : "bg-emerald-500";
 
   return (
     <span className={`inline-flex items-center gap-2 px-2 py-0.5 rounded-full text-[11px] font-medium ${cls}`}>
@@ -667,7 +669,7 @@ function StatusPill({ level, text }: { level: "blocked" | "warn" | "ok"; text: s
 }
 
 /* ------------------------------
-   Phase C2: Coverage + Readiness
+   Readiness gate: checklist ribbon
 ------------------------------ */
 
 type CoverageSummary = {
@@ -678,6 +680,9 @@ type CoverageSummary = {
   notStarted: number;
   readyForInsights: boolean;
   nextActions: string[];
+  // for checklist
+  hasServersNonBlocked: boolean;
+  hasAnyOtherNonBlocked: boolean;
 };
 
 function computeCoverage(uploads: Record<SliceKey, UploadState>): CoverageSummary {
@@ -701,9 +706,7 @@ function computeCoverage(uploads: Record<SliceKey, UploadState>): CoverageSummar
     if (s.level === "blocked") {
       blocked += 1;
       if (s.missingRequired && s.missingRequired.length > 0) {
-        nextActions.push(
-          `Fix ${SLICE_META[k].label}: missing required (${s.missingRequired.join(", ")}).`
-        );
+        nextActions.push(`Fix ${SLICE_META[k].label}: missing required (${s.missingRequired.join(", ")}).`);
       } else {
         nextActions.push(`Fix ${SLICE_META[k].label}: blocked by guardrails (see details).`);
       }
@@ -715,18 +718,14 @@ function computeCoverage(uploads: Record<SliceKey, UploadState>): CoverageSummar
     }
   }
 
-  // Heuristic readiness:
-  // - not ready if any blocked
-  // - ready if at least Servers + one of (Storage/Databases/Apps/Deps) accepted/warn and none blocked
   const serversResult = uploads.servers?.result;
-  const serversOk =
-    serversResult && computeSliceStatus(serversResult).level !== "blocked";
+  const hasServersNonBlocked = !!serversResult && computeSliceStatus(serversResult).level !== "blocked";
 
-  const anyOtherOk = (["storage", "databases", "applications", "dependencies"] as SliceKey[]).some(
+  const hasAnyOtherNonBlocked = (["storage", "databases", "applications", "dependencies"] as SliceKey[]).some(
     (k) => uploads[k]?.result && computeSliceStatus(uploads[k].result).level !== "blocked"
   );
 
-  const readyForInsights = blocked === 0 && !!serversOk && anyOtherOk;
+  const readyForInsights = blocked === 0 && hasServersNonBlocked && hasAnyOtherNonBlocked;
 
   return {
     totalSlices: keys.length,
@@ -736,61 +735,64 @@ function computeCoverage(uploads: Record<SliceKey, UploadState>): CoverageSummar
     notStarted,
     readyForInsights,
     nextActions: nextActions.slice(0, 6),
+    hasServersNonBlocked,
+    hasAnyOtherNonBlocked,
   };
 }
 
-function ReadinessPanel({ coverage }: { coverage: CoverageSummary }) {
-  const bannerClass = coverage.readyForInsights
-    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-    : "border-amber-200 bg-amber-50 text-amber-900";
+function ReadinessChecklist({ coverage }: { coverage: CoverageSummary }) {
+  const panelTone = coverage.readyForInsights
+    ? "border-emerald-200 bg-emerald-50"
+    : "border-amber-200 bg-amber-50";
 
-  const bannerTitle = coverage.readyForInsights
-    ? "Assessment is ready for Insights and Diagrams (based on ingestion coverage)."
-    : "Assessment is not ready for Insights yet. Resolve blocked slices and increase coverage.";
+  const title = coverage.readyForInsights ? "Readiness gate: PASSED" : "Readiness gate: NOT READY";
+  const subtitle = coverage.readyForInsights
+    ? "You can proceed to Insights, Diagrams, and Cost Modeling for this run."
+    : "Complete the checklist below to unlock Insights and Diagrams.";
+
+  const check = (ok: boolean, text: string) => (
+    <div className="flex items-start gap-2 text-xs">
+      <span className={`mt-[3px] h-2 w-2 rounded-full ${ok ? "bg-emerald-600" : "bg-amber-600"}`} />
+      <div className="text-gray-800">
+        <span className="font-medium">{text}</span>
+        {!ok ? <span className="text-gray-600"> (pending)</span> : null}
+      </div>
+    </div>
+  );
 
   return (
-    <div className="space-y-3">
-      <div className={`border rounded-md px-4 py-3 text-sm ${bannerClass}`}>
-        <div className="font-medium">{bannerTitle}</div>
-        <div className="text-xs mt-1">
-          Readiness gate is heuristic for MVP demos: no blocked slices, Servers present, plus at least one other slice.
+    <div className={`border rounded-md px-4 py-3 ${panelTone}`}>
+      <div className="flex items-start justify-between gap-6">
+        <div>
+          <div className="text-sm font-semibold text-gray-900">{title}</div>
+          <div className="text-xs text-gray-700 mt-1">{subtitle}</div>
+        </div>
+
+        <div className="text-right">
+          <div className="text-xs font-semibold text-gray-900">
+            {coverage.totalSlices - coverage.notStarted}/{coverage.totalSlices} slices started
+          </div>
+          <div className="text-[11px] text-gray-700">
+            Accepted {coverage.accepted} • Warnings {coverage.acceptedWithWarnings} • Blocked {coverage.blocked}
+          </div>
         </div>
       </div>
 
-      <div className="border border-gray-200 bg-white rounded-md shadow-sm p-4">
-        <div className="flex items-start justify-between gap-6">
-          <div>
-            <h3 className="text-sm font-medium text-gray-900">Ingestion coverage</h3>
-            <p className="text-xs text-gray-600">
-              Snapshot across the enabled MVP slices on this assessment.
-            </p>
-          </div>
-
-          <div className="text-right">
-            <div className="text-sm font-semibold text-gray-900">
-              {coverage.totalSlices - coverage.notStarted}/{coverage.totalSlices} slices started
-            </div>
-            <div className="text-xs text-gray-600">
-              Accepted {coverage.accepted} • Warnings {coverage.acceptedWithWarnings} • Blocked{" "}
-              {coverage.blocked} • Not started {coverage.notStarted}
-            </div>
+      <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="bg-white/70 border border-gray-200 rounded-md px-3 py-2">
+          <div className="text-[11px] uppercase tracking-wide font-semibold text-gray-700 mb-2">Checklist</div>
+          <div className="space-y-2">
+            {check(coverage.blocked === 0, "No blocked slices")}
+            {check(coverage.hasServersNonBlocked, "Servers present (non-blocked)")}
+            {check(coverage.hasAnyOtherNonBlocked, "At least one other slice present")}
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-          <MiniStat label="Accepted" value={String(coverage.accepted)} tone="ok" />
-          <MiniStat label="Warnings" value={String(coverage.acceptedWithWarnings)} tone="warn" />
-          <MiniStat label="Blocked" value={String(coverage.blocked)} tone="bad" />
-          <MiniStat label="Not started" value={String(coverage.notStarted)} tone="muted" />
-        </div>
-
-        <div className="mt-4">
-          <h4 className="text-xs font-semibold text-gray-900 uppercase tracking-wide">
-            Next best actions
-          </h4>
-          <ul className="mt-2 list-disc ml-5 text-xs text-gray-700 space-y-1">
+        <div className="bg-white/70 border border-gray-200 rounded-md px-3 py-2 sm:col-span-2">
+          <div className="text-[11px] uppercase tracking-wide font-semibold text-gray-700 mb-2">Next best actions</div>
+          <ul className="list-disc ml-5 text-xs text-gray-800 space-y-1">
             {coverage.nextActions.length === 0 ? (
-              <li>Great shape — proceed to Insights, Diagrams, and Cost Modeling.</li>
+              <li>Proceed to Insights, Diagrams, and Cost Modeling.</li>
             ) : (
               coverage.nextActions.map((x, i) => <li key={i}>{x}</li>)
             )}
@@ -801,38 +803,11 @@ function ReadinessPanel({ coverage }: { coverage: CoverageSummary }) {
   );
 }
 
-function MiniStat({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone: "ok" | "warn" | "bad" | "muted";
-}) {
-  const cls =
-    tone === "ok"
-      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-      : tone === "warn"
-        ? "border-amber-200 bg-amber-50 text-amber-900"
-        : tone === "bad"
-          ? "border-red-200 bg-red-50 text-red-800"
-          : "border-gray-200 bg-gray-50 text-gray-700";
-
-  return (
-    <div className={`border rounded-md px-3 py-2 ${cls}`}>
-      <div className="text-[11px] uppercase tracking-wide font-medium">{label}</div>
-      <div className="text-sm font-semibold">{value}</div>
-    </div>
-  );
-}
-
 /* ------------------------------
-   Phase C2: Cross-slice signals
+   Cross-slice signals
 ------------------------------ */
 
 function CrossSliceSignals({ uploads }: { uploads: Record<SliceKey, UploadState> }) {
-  // Gather warnings across slices (as a "cross-slice checks" area)
   const items = useMemo(() => {
     const out: { slice: SliceKey; text: string }[] = [];
     (Object.keys(uploads) as SliceKey[]).forEach((k) => {
@@ -845,8 +820,6 @@ function CrossSliceSignals({ uploads }: { uploads: Record<SliceKey, UploadState>
         .concat(extractList(r?.warning_messages));
 
       const all = (guardWarnings.length > 0 ? guardWarnings : []).concat(topWarnings);
-
-      // filter duplicates / empties
       const uniq = Array.from(new Set(all.map((x) => String(x).trim()).filter(Boolean)));
 
       uniq.slice(0, 6).forEach((w) => out.push({ slice: k, text: w }));
@@ -892,74 +865,130 @@ function CrossSliceSignals({ uploads }: { uploads: Record<SliceKey, UploadState>
 }
 
 /* ------------------------------
-   Slice Upload Row + Results Panel
+   Slice Upload Row (custom file picker + 2x2 layout)
 ------------------------------ */
 
 function SliceUploadRow({
+  slice,
   label,
   description,
-  slice,
   state,
-  onFileChange,
+  ingestedCount,
+  setUploads,
   onUpload,
   onDownloadTemplate,
+  onViewRecords,
 }: {
+  slice: SliceKey;
   label: string;
   description: string;
-  slice: SliceKey;
   state: UploadState;
-  onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  ingestedCount: number;
+  setUploads: React.Dispatch<React.SetStateAction<Record<SliceKey, UploadState>>>;
   onUpload: () => void;
   onDownloadTemplate: () => void;
+  onViewRecords: () => void;
 }) {
-  const s = computeSliceStatus(state.result);
+  const status = computeSliceStatus(state.result);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const onNativeFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files && event.target.files[0] ? event.target.files[0] : undefined;
+
+    setUploads((prev) => ({
+      ...prev,
+      [slice]: {
+        ...prev[slice],
+        file,
+        error: null,
+        okMessage: null,
+      },
+    }));
+  };
+
+  const fileName = state.file?.name;
+  const fileStatusText = fileName ? fileName : "No file selected";
+  const ingestedText = `Ingested: ${ingestedCount}`;
 
   return (
     <div className="border border-gray-100 rounded-md px-3 py-3">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
+      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+        <div className="space-y-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
             <p className="text-sm font-medium text-gray-900">{label}</p>
-            {s.label ? <StatusPill level={s.level} text={s.label} /> : null}
+            {status.label ? <StatusPill level={status.level} text={status.label} /> : null}
           </div>
-
           <p className="text-xs text-gray-600">{description}</p>
-
-          {s.summary ? <p className="text-xs text-gray-700">{s.summary}</p> : null}
+          {status.summary ? <p className="text-xs text-gray-700">{status.summary}</p> : null}
         </div>
 
-        <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+        {/* Action area: 2x2 layout */}
+        <div className="w-full lg:w-[520px]">
+          {/* hidden native input */}
           <input
+            ref={fileInputRef}
             type="file"
             accept=".csv"
-            onChange={onFileChange}
-            className="block text-xs text-gray-700"
+            onChange={onNativeFileChange}
+            className="hidden"
           />
-          <button
-            type="button"
-            onClick={onDownloadTemplate}
-            className="inline-flex justify-center items-center px-3 py-1.5 rounded-md text-xs font-medium text-gray-700 bg-white border border-gray-200 hover:bg-gray-50"
-          >
-            Download template
-          </button>
-          <button
-            type="button"
-            onClick={onUpload}
-            disabled={state.uploading}
-            className="inline-flex justify-center items-center px-3 py-1.5 rounded-md text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60"
-          >
-            {state.uploading ? "Uploading..." : `Upload ${slice} CSV`}
-          </button>
+
+          <div className="grid grid-cols-2 gap-2">
+            {/* Row 1 */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="inline-flex justify-center items-center px-3 py-2 rounded-md text-xs font-medium text-gray-800 bg-white border border-gray-200 hover:bg-gray-50"
+              title={fileName || "Choose a CSV file"}
+            >
+              Choose file
+            </button>
+
+            <button
+              type="button"
+              onClick={onUpload}
+              disabled={state.uploading}
+              className="inline-flex justify-center items-center px-3 py-2 rounded-md text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60"
+            >
+              {state.uploading ? "Uploading..." : `Upload ${slice} CSV`}
+            </button>
+
+            {/* Row 2 */}
+            <button
+              type="button"
+              onClick={onViewRecords}
+              className="inline-flex justify-center items-center px-3 py-2 rounded-md text-xs font-medium text-gray-800 bg-white border border-gray-200 hover:bg-gray-50"
+            >
+              View records
+            </button>
+
+            <button
+              type="button"
+              onClick={onDownloadTemplate}
+              className="inline-flex justify-center items-center px-3 py-2 rounded-md text-xs font-medium text-gray-800 bg-white border border-gray-200 hover:bg-gray-50"
+            >
+              Download template
+            </button>
+          </div>
+
+          <div className="mt-1 text-[11px] text-gray-500 truncate">
+            {fileStatusText} • {ingestedText}
+          </div>
         </div>
       </div>
 
-      {state.error && <p className="mt-1 text-xs text-red-600">{state.error}</p>}
-      {state.okMessage && <p className="mt-1 text-xs text-green-600">{state.okMessage}</p>}
+      {state.error && <p className="mt-2 text-xs text-red-600">{state.error}</p>}
+      {state.okMessage && <p className="mt-2 text-xs text-emerald-700">{state.okMessage}</p>}
 
+      {/* Keep the existing details panel when we have a result */}
       {state.result && <IngestionResultPanel result={state.result} />}
     </div>
   );
 }
+
+/* ------------------------------
+   Ingestion Result Details Panel
+------------------------------ */
 
 function IngestionResultPanel({ result }: { result: any }) {
   const rowsProcessed = result?.rows_processed ?? result?.counts?.rows_processed;
@@ -1074,25 +1103,34 @@ function IngestionResultPanel({ result }: { result: any }) {
 
       <details className="mt-1">
         <summary className="cursor-pointer text-xs text-blue-700 hover:underline">Show raw JSON</summary>
-        <pre className="text-[11px] bg-white border border-gray-200 rounded p-2 overflow-auto max-h-72 mt-2">
-          {json}
-        </pre>
+        <pre className="text-[11px] bg-white border border-gray-200 rounded p-2 overflow-auto max-h-72 mt-2">{json}</pre>
       </details>
     </div>
   );
 }
 
 /* ------------------------------
-   Misc
+   Charts (locked style)
 ------------------------------ */
 
-function ChartCard({ title, description }: { title: string; description: string }) {
+function ChartCardLocked({ title, description, locked }: { title: string; description: string; locked: boolean }) {
   return (
-    <div className="border border-gray-200 bg-white rounded-md shadow-sm p-4">
+    <div className={`border border-gray-200 bg-white rounded-md shadow-sm p-4 ${locked ? "opacity-70" : ""}`}>
       <h3 className="text-sm font-medium text-gray-900 mb-2">{title}</h3>
       <p className="text-xs text-gray-600 mb-4">{description}</p>
-      <div className="h-48 border border-dashed border-gray-300 rounded flex items-center justify-center text-xs text-gray-400">
-        Chart placeholder
+
+      <div className="relative">
+        <div className="h-48 border border-dashed border-gray-300 rounded flex items-center justify-center text-xs text-gray-400">
+          {locked ? "Locked" : "Chart area"}
+        </div>
+
+        {locked && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="bg-gray-900/70 text-white text-xs px-3 py-2 rounded-md">
+              Locked until ingestion readiness is met
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1105,4 +1143,26 @@ function PlaceholderTab({ title }: { title: string }) {
       this section.
     </div>
   );
+}
+
+/* ------------------------------
+   Helpers
+------------------------------ */
+
+function getIngestedCountFromRun(run: RunRecord | null, slice: SliceKey): number {
+  if (!run) return 0;
+  switch (slice) {
+    case "servers":
+      return run.servers_ingested ?? 0;
+    case "storage":
+      return run.storage_ingested ?? 0;
+    case "databases":
+      return run.databases_ingested ?? 0;
+    case "applications":
+      return run.applications_ingested ?? 0;
+    case "dependencies":
+      return run.dependencies_ingested ?? 0;
+    default:
+      return 0;
+  }
 }

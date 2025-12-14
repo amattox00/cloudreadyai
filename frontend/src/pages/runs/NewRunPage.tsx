@@ -2,135 +2,150 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 export default function NewRunPage() {
-  const [label, setLabel] = useState("");
+  const nav = useNavigate();
+
+  const [clientName, setClientName] = useState("");
   const [environment, setEnvironment] = useState("prod");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [assessmentName, setAssessmentName] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-  const navigate = useNavigate();
+  const buildName = () => {
+    const base = assessmentName.trim()
+      ? assessmentName.trim()
+      : `${clientName.trim() || "New client"} • ${environment.toUpperCase()}`;
+    return base;
+  };
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setIsSubmitting(true);
-    setMessage(null);
-    setError(null);
+  async function createRun() {
+    setErr(null);
+    setLoading(true);
 
     const payload = {
-      label: label || "New CloudReadyAI assessment",
-      environment,
+      name: buildName(),
+      source: clientName.trim() || "Client",
+      environment: environment,
     };
 
     try {
-      const res = await fetch("/v1/runs", {
+      // Attempt 1: send metadata (if backend ignores unknown keys, great)
+      let res = await fetch("/v1/run_registry", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
-      // Backend might not be wired yet; handle that gracefully.
-      let data: any = {};
-      try {
-        data = await res.json();
-      } catch {
-        // ignore JSON parse errors; this is expected if the API returns HTML/empty
+      // Attempt 2: fallback if backend expects empty POST
+      if (!res.ok) {
+        res = await fetch("/v1/run_registry", { method: "POST" });
       }
 
       if (!res.ok) {
-        throw new Error(
-          data?.detail ||
-            `Backend responded with HTTP ${res.status}. /v1/runs POST may not be implemented yet.`
-        );
+        const t = await res.text().catch(() => "");
+        throw new Error(`Create assessment failed (${res.status}): ${t}`);
       }
 
-      const newId: string = data?.id || "(check backend logs for ID)";
-      setMessage(`Run created successfully with id ${newId}.`);
+      const run = await res.json();
 
-      // For now, route back to /runs; later we can deep-link into portfolio.
-      navigate("/runs");
-    } catch (err: any) {
-      console.error("Error creating run:", err);
-      setError(
-        err?.message ||
-          "Unable to create run. This is expected if POST /v1/runs is not live yet."
-      );
+      // Store “nice” metadata client-side for MVP demo (until backend fields exist)
+      const runId = run?.id;
+      if (runId) {
+        const key = `run_meta_${runId}`;
+        localStorage.setItem(
+          key,
+          JSON.stringify({
+            clientName: clientName.trim(),
+            environment,
+            assessmentName: buildName(),
+            createdAt: new Date().toISOString(),
+          })
+        );
+        nav(`/runs/${encodeURIComponent(runId)}`, { replace: true });
+        return;
+      }
+
+      // if no run.id, go to Assessments list
+      nav("/runs", { replace: true });
+    } catch (e: any) {
+      setErr(e?.message || "Failed to create assessment.");
     } finally {
-      setIsSubmitting(false);
+      setLoading(false);
     }
   }
 
   return (
-    <div className="space-y-6">
-      <section className="panel p-4">
-        <h1 className="text-2xl font-semibold mb-1">New Assessment</h1>
-        <p className="text-sm text-[var(--text-muted)]">
-          This is the Phase A/B entry point into CloudReadyAI. In later phases
-          this will drive ingestion, diagrams, portfolio, and cost views for a
-          single run.
+    <div className="px-6 py-6 max-w-3xl">
+      <div className="mb-4">
+        <h1 className="text-xl font-semibold text-gray-900">Start a new assessment</h1>
+        <p className="text-sm text-gray-600">
+          Capture basic client context so the demo flow starts clean.
         </p>
-      </section>
+      </div>
 
-      <section className="panel p-4 max-w-xl">
-        <h2 className="text-lg font-semibold mb-3">Assessment Details</h2>
+      <div className="border border-gray-200 bg-white rounded-xl shadow-sm p-5 space-y-4">
+        <div>
+          <label className="block text-xs font-medium text-gray-700">Client name</label>
+          <input
+            value={clientName}
+            onChange={(e) => setClientName(e.target.value)}
+            placeholder="Acme Health"
+            className="mt-1 w-full"
+          />
+        </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1">
-            <label className="text-sm font-medium">
-              Assessment name (optional)
-            </label>
-            <input
-              type="text"
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="e.g., USDA-ASSESS-FY25 baseline"
-            />
-            <p className="text-xs text-[var(--text-muted)]">
-              If left blank, CloudReadyAI will use a default label.
-            </p>
-          </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-700">Environment</label>
+          <select
+            value={environment}
+            onChange={(e) => setEnvironment(e.target.value)}
+            className="mt-1 w-full"
+          >
+            <option value="prod">Production</option>
+            <option value="nonprod">Non-Production</option>
+            <option value="dev">Dev</option>
+            <option value="test">Test</option>
+            <option value="stage">Stage</option>
+          </select>
+        </div>
 
-          <div className="space-y-1">
-            <label className="text-sm font-medium">Environment</label>
-            <select
-              value={environment}
-              onChange={(e) => setEnvironment(e.target.value)}
-            >
-              <option value="prod">Production</option>
-              <option value="nonprod">Non-Production</option>
-              <option value="lab">Lab / POC</option>
-            </select>
-          </div>
-
-          {message && (
-            <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-md px-3 py-2">
-              {message}
-            </div>
-          )}
-
-          {error && (
-            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
-              {error}
-            </div>
-          )}
-
-          <div className="pt-2">
-            <button
-              type="submit"
-              className="btn-primary px-4 py-2"
-              disabled={isSubmitting}
-            >
-              {isSubmitting ? "Creating Run…" : "Create Run"}
-            </button>
-          </div>
-
-          <p className="text-xs text-[var(--text-muted)] mt-2">
-            Today this is a thin wrapper around <code>POST /v1/runs</code>.
-            Once the backend contracts are finalized, it will automatically
-            kick off Phase B ingestion and wire into diagrams, portfolio, and
-            cost/tCO flows.
+        <div>
+          <label className="block text-xs font-medium text-gray-700">
+            Assessment name (optional)
+          </label>
+          <input
+            value={assessmentName}
+            onChange={(e) => setAssessmentName(e.target.value)}
+            placeholder="Acme • Q1 Migration Assessment"
+            className="mt-1 w-full"
+          />
+          <p className="text-[11px] text-gray-500 mt-1">
+            If blank, we’ll use: <span className="font-medium">{buildName()}</span>
           </p>
-        </form>
-      </section>
+        </div>
+
+        {err && (
+          <div className="border border-red-200 bg-red-50 text-red-700 text-sm px-3 py-2 rounded">
+            {err}
+          </div>
+        )}
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => nav("/runs")}
+            className="px-3 py-2 rounded-md border border-gray-200 text-sm hover:bg-gray-50"
+            disabled={loading}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={createRun}
+            className="px-3 py-2 rounded-md text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60"
+            disabled={loading || !clientName.trim()}
+          >
+            {loading ? "Creating..." : "Create assessment"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

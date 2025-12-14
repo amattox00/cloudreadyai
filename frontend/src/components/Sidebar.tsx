@@ -1,7 +1,14 @@
 import React from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 
 export default function Sidebar() {
+  const nav = useNavigate();
+
+  const signOut = () => {
+    localStorage.removeItem("authToken");
+    nav("/", { replace: true }); // back to Marketing
+  };
+
   return (
     <aside
       className="w-64 h-full flex flex-col p-4 text-white"
@@ -24,17 +31,6 @@ export default function Sidebar() {
         </NavLink>
 
         <NavLink
-          to="/portfolio"
-          className={({ isActive }) =>
-            `block px-4 py-2 rounded ${
-              isActive ? "bg-[var(--brand-accent)]" : "hover:bg-gray-700"
-            }`
-          }
-        >
-          Clients &amp; Portfolios
-        </NavLink>
-
-        <NavLink
           to="/runs"
           className={({ isActive }) =>
             `block px-4 py-2 rounded ${
@@ -43,6 +39,17 @@ export default function Sidebar() {
           }
         >
           Assessments
+        </NavLink>
+
+        <NavLink
+          to="/portfolio"
+          className={({ isActive }) =>
+            `block px-4 py-2 rounded ${
+              isActive ? "bg-[var(--brand-accent)]" : "hover:bg-gray-700"
+            }`
+          }
+        >
+          Clients &amp; Portfolios
         </NavLink>
 
         <NavLink
@@ -55,8 +62,6 @@ export default function Sidebar() {
         >
           Diagrams
         </NavLink>
-
-        {/* === MENU ITEMS === */}
 
         <NavLink
           to="/analysis"
@@ -80,7 +85,6 @@ export default function Sidebar() {
           Cost Modeling
         </NavLink>
 
-        {/* ⭐ RECOMMENDATIONS / STRATEGY LINK ⭐ */}
         <NavLink
           to="/recommendations"
           className={({ isActive }) =>
@@ -92,7 +96,6 @@ export default function Sidebar() {
           Migration Strategy
         </NavLink>
 
-        {/* Settings */}
         <NavLink
           to="/settings"
           className={({ isActive }) =>
@@ -107,12 +110,13 @@ export default function Sidebar() {
 
       {/* Sign Out */}
       <div className="mt-8">
-        <a
-          href="/logout"
-          className="block px-4 py-2 text-center rounded bg-[var(--brand-accent)] hover:opacity-90"
+        <button
+          type="button"
+          onClick={signOut}
+          className="w-full block px-4 py-2 text-center rounded bg-[var(--brand-accent)] hover:opacity-90"
         >
           Sign Out
-        </a>
+        </button>
       </div>
 
       <div className="text-xs mt-4 opacity-70">env: dev • instance</div>
