@@ -24,6 +24,7 @@ from app.routers import run_rollup_v2
 from app.routers import analysis_v2
 from app.routers.run_insights_v2 import router as run_insights_v2_router
 from app.routers.ingest_results_v2 import router as ingest_results_router
+from app.routers.analysis_run_v1 import router as analysis_run_v1_router
 
 app = FastAPI(
     title="CloudReadyAI API",
@@ -63,6 +64,7 @@ app.include_router(run_rollup_v2.router)
 app.include_router(analysis_v2.router)
 app.include_router(run_insights_v2_router)
 app.include_router(ingest_results_router)
+app.include_router(analysis_run_v1_router)
 
 # Health endpoint (must be defined AFTER app exists)
 @app.get("/health")
